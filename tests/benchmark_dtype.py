@@ -122,7 +122,9 @@ def run_benchmark(
     Run dtype comparison benchmark.
     """
     if device == "cpu":
-        print("WARNING: Running on CPU. FP16/BF16 may not work properly or show performance benefits.")
+        print(
+            "WARNING: Running on CPU. FP16/BF16 may not work properly or show performance benefits."
+        )
 
     results = []
     header_lines = []
@@ -130,7 +132,9 @@ def run_benchmark(
     header_lines.append("=" * 100)
     header_lines.append("Style-Bert-VITS2 Dtype Comparison Benchmark")
     header_lines.append("=" * 100)
-    header_lines.append(f"Date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    header_lines.append(
+        f"Date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
     header_lines.append(f"Device: {device}")
     header_lines.append(f"Model: {model_name}")
     header_lines.append(f"Runs per test: {num_runs}")
@@ -209,15 +213,19 @@ def run_benchmark(
                 dtype_results["texts"].append(result)
 
                 mem_str = f", mem={peak_memory:.0f}MB" if device == "cuda" else ""
-                print(f"  {description}: avg={avg_time:.3f}s, min={min_time:.3f}s, max={max_time:.3f}s{mem_str}")
+                print(
+                    f"  {description}: avg={avg_time:.3f}s, min={min_time:.3f}s, max={max_time:.3f}s{mem_str}"
+                )
 
             except torch.cuda.OutOfMemoryError as e:
                 print(f"  {description}: OOM ERROR - {e}")
-                dtype_results["texts"].append({
-                    "description": description,
-                    "text_length": len(text),
-                    "error": "OOM",
-                })
+                dtype_results["texts"].append(
+                    {
+                        "description": description,
+                        "text_length": len(text),
+                        "error": "OOM",
+                    }
+                )
                 # Clear CUDA cache after OOM
                 if device == "cuda":
                     torch.cuda.empty_cache()
@@ -225,11 +233,13 @@ def run_benchmark(
 
             except Exception as e:
                 print(f"  {description}: ERROR - {e}")
-                dtype_results["texts"].append({
-                    "description": description,
-                    "text_length": len(text),
-                    "error": str(e),
-                })
+                dtype_results["texts"].append(
+                    {
+                        "description": description,
+                        "text_length": len(text),
+                        "error": str(e),
+                    }
+                )
 
         results.append(dtype_results)
         print("")
@@ -245,9 +255,15 @@ def run_benchmark(
         report_lines.append("-" * 50)
         for text_result in dtype_result["texts"]:
             if "error" in text_result:
-                report_lines.append(f"  {text_result['description']}: ERROR - {text_result['error']}")
+                report_lines.append(
+                    f"  {text_result['description']}: ERROR - {text_result['error']}"
+                )
             else:
-                mem_str = f", mem={text_result['peak_memory']:.0f}MB" if text_result.get('peak_memory', 0) > 0 else ""
+                mem_str = (
+                    f", mem={text_result['peak_memory']:.0f}MB"
+                    if text_result.get("peak_memory", 0) > 0
+                    else ""
+                )
                 report_lines.append(
                     f"  {text_result['description']}: "
                     f"avg={text_result['avg_time']:.3f}s, min={text_result['min_time']:.3f}s, max={text_result['max_time']:.3f}s{mem_str}"
@@ -262,7 +278,7 @@ def run_benchmark(
     # Header row
     header = f"{'Dtype':<25}"
     for test_case in BENCHMARK_TEXTS:
-        desc_short = test_case['description'].split(' ')[0]
+        desc_short = test_case["description"].split(" ")[0]
         header += f" {desc_short:>12}"
     header += f" {'Overall Avg':>12}"
     report_lines.append(header)
@@ -303,7 +319,7 @@ def run_benchmark(
 
     header = f"{'Dtype':<25}"
     for test_case in BENCHMARK_TEXTS:
-        desc_short = test_case['description'].split(' ')[0]  # Short, Medium, Long, etc.
+        desc_short = test_case["description"].split(" ")[0]  # Short, Medium, Long, etc.
         header += f" {desc_short:>12}"
     header += f" {'Overall':>12}"
     report_lines.append(header)
@@ -337,7 +353,7 @@ def run_benchmark(
 
         header = f"{'Dtype':<25}"
         for test_case in BENCHMARK_TEXTS:
-            desc_short = test_case['description'].split(' ')[0]
+            desc_short = test_case["description"].split(" ")[0]
             header += f" {desc_short:>12}"
         header += f" {'Max':>12}"
         report_lines.append(header)
@@ -373,12 +389,14 @@ def run_benchmark(
             if dtype_result["name"] == "FP32":
                 for text_result in dtype_result["texts"]:
                     if "error" not in text_result:
-                        fp32_memory[text_result["description"]] = text_result.get("peak_memory", 0)
+                        fp32_memory[text_result["description"]] = text_result.get(
+                            "peak_memory", 0
+                        )
                 break
 
         header = f"{'Dtype':<25}"
         for test_case in BENCHMARK_TEXTS:
-            desc_short = test_case['description'].split(' ')[0]
+            desc_short = test_case["description"].split(" ")[0]
             header += f" {desc_short:>12}"
         header += f" {'Avg':>12}"
         report_lines.append(header)
@@ -389,7 +407,11 @@ def run_benchmark(
             ratios = []
             for text_result in dtype_result["texts"]:
                 desc = text_result["description"]
-                if "error" in text_result or desc not in fp32_memory or fp32_memory[desc] == 0:
+                if (
+                    "error" in text_result
+                    or desc not in fp32_memory
+                    or fp32_memory[desc] == 0
+                ):
                     row += f" {'N/A':>12}"
                 else:
                     ratio = text_result.get("peak_memory", 0) / fp32_memory[desc]
@@ -406,7 +428,9 @@ def run_benchmark(
 
     report_lines.append("")
     report_lines.append("Notes:")
-    report_lines.append("- FP16/BF16 converts the model to lower precision for faster inference")
+    report_lines.append(
+        "- FP16/BF16 converts the model to lower precision for faster inference"
+    )
     report_lines.append("- Speedup > 1.0 means faster than FP32")
     report_lines.append("- Memory ratio < 1.0 means less memory than FP32")
     report_lines.append("- OOM = Out of Memory error")
@@ -416,7 +440,9 @@ def run_benchmark(
     print("")
     print("SUMMARY TABLE (Average inference time in seconds)")
     print("=" * 100)
-    for line in report_lines[report_lines.index("SUMMARY TABLE (Average inference time in seconds)") + 1:]:
+    for line in report_lines[
+        report_lines.index("SUMMARY TABLE (Average inference time in seconds)") + 1 :
+    ]:
         print(line)
 
     # Save to file

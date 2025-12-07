@@ -1,4 +1,5 @@
 import argparse
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from multiprocessing import cpu_count
 from pathlib import Path
@@ -16,9 +17,54 @@ from style_bert_vits2.utils.stdout_wrapper import SAFE_STDOUT
 
 DEFAULT_BLOCK_SIZE: float = 0.400  # seconds
 
+# Supported audio formats that will be converted to .wav
+SUPPORTED_AUDIO_EXTENSIONS = {".wav", ".mp3", ".ogg", ".flac", ".opus", ".m4a"}
+
 
 class BlockSizeException(Exception):
     pass
+
+
+def update_list_file_extensions(list_file: Path) -> int:
+    """
+    Update audio file extensions in a list file to .wav.
+
+    List file format: path|speaker|language|text (or similar pipe-delimited format)
+    The first field is the audio file path.
+
+    Args:
+        list_file: Path to the list file (e.g., esd.list)
+
+    Returns:
+        Number of lines updated
+    """
+    if not list_file.exists():
+        return 0
+
+    # Build regex pattern to match audio extensions at end of first field
+    # Matches: path/to/audio.mp3|... or path\to\audio.ogg|...
+    extensions_pattern = "|".join(
+        re.escape(ext) for ext in SUPPORTED_AUDIO_EXTENSIONS if ext != ".wav"
+    )
+    # Pattern: (start or after separator)(path)(extension)(pipe)
+    pattern = re.compile(rf"^([^|]*?)({extensions_pattern})(\|)", re.IGNORECASE)
+
+    updated_count = 0
+    lines = []
+
+    with open(list_file, "r", encoding="utf-8") as f:
+        for line in f:
+            new_line, num_subs = pattern.subn(r"\1.wav\3", line)
+            if num_subs > 0:
+                updated_count += 1
+            lines.append(new_line)
+
+    if updated_count > 0:
+        with open(list_file, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+        logger.info(f"Updated {updated_count} paths in {list_file}")
+
+    return updated_count
 
 
 def normalize_audio(data: NDArray[Any], sr: int):
@@ -109,6 +155,14 @@ if __name__ == "__main__":
         default=False,
         help="trim silence (start and end only)",
     )
+    parser.add_argument(
+        "--list_dir",
+        "-l",
+        type=str,
+        default=None,
+        help="Directory containing list files (e.g., esd.list) to update audio extensions. "
+        "If not specified, uses parent directory of output_dir.",
+    )
     args = parser.parse_args()
 
     if args.num_processes == 0:
@@ -146,3 +200,14 @@ if __name__ == "__main__":
             pass
 
     logger.info("Resampling Done!")
+
+    # Update list files to use .wav extensions
+    list_dir = Path(args.list_dir) if args.list_dir else output_dir.parent
+    if list_dir.exists():
+        list_files = list(list_dir.glob("*.list"))
+        if list_files:
+            logger.info(
+                f"Updating audio extensions in list files: {[f.name for f in list_files]}"
+            )
+            for list_file in list_files:
+                update_list_file_extensions(list_file)

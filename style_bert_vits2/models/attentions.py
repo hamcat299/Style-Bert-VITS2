@@ -141,7 +141,9 @@ class Encoder(nn.Module):
             # Debug: Before norm_layers_1
             x_plus_y = x + y
             if torch.isnan(x_plus_y).any():
-                print(f"[DEBUG Encoder] NaN in (x + y) before norm_layers_1 in layer {i}")
+                print(
+                    f"[DEBUG Encoder] NaN in (x + y) before norm_layers_1 in layer {i}"
+                )
 
             x = self.norm_layers_1[i](x + y)
             # Debug: After norm_layers_1
@@ -162,7 +164,9 @@ class Encoder(nn.Module):
             # Debug: Before norm_layers_2
             x_plus_y = x + y
             if torch.isnan(x_plus_y).any():
-                print(f"[DEBUG Encoder] NaN in (x + y) before norm_layers_2 in layer {i}")
+                print(
+                    f"[DEBUG Encoder] NaN in (x + y) before norm_layers_2 in layer {i}"
+                )
 
             x = self.norm_layers_2[i](x + y)
             # Debug: After norm_layers_2
@@ -391,7 +395,9 @@ class MultiHeadAttention(nn.Module):
 
         # relative key logits (self-attention only)
         if self.window_size is not None:
-            assert t_s == t_t, "Relative attention is only available for self-attention."
+            assert t_s == t_t, (
+                "Relative attention is only available for self-attention."
+            )
             key_relative_embeddings = self._get_relative_embeddings(
                 self.emb_rel_k, t_s
             ).to(device=device, dtype=dtype)
@@ -401,7 +407,9 @@ class MultiHeadAttention(nn.Module):
             rel_logits = self._matmul_with_relative_keys(
                 q_for_rel, key_relative_embeddings
             )  # [b, h, t, 2*t-1]
-            scores_local = self._relative_position_to_absolute_position(rel_logits)  # [b,h,t,t]
+            scores_local = self._relative_position_to_absolute_position(
+                rel_logits
+            )  # [b,h,t,t]
 
             attn_bias = attn_bias + scores_local  # broadcast add
 
@@ -427,7 +435,7 @@ class MultiHeadAttention(nn.Module):
             # else assume already 4D-like
 
             # Convert to bool allow-mask
-            m_allow = (m != 0)
+            m_allow = m != 0
 
             # Build mask bias with same shape as m (for clean broadcasting)
             mask_bias = torch.zeros_like(m_allow, dtype=dtype, device=device)

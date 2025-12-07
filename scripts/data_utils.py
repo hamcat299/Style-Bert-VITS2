@@ -37,7 +37,6 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
         self.sampling_rate = hparams.sampling_rate
         self.spk_map = hparams.spk2id
         self.hparams = hparams
-        self.use_jp_extra = getattr(hparams, "use_jp_extra", False)
 
         self.use_mel_spec_posterior = getattr(
             hparams, "use_mel_posterior_encoder", False
@@ -94,28 +93,15 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
         # separate filename, speaker_id and text
         audiopath, sid, language, text, phones, tone, word2ph = audiopath_sid_text
 
-        bert, ja_bert, en_bert, phones, tone, language = self.get_text(
+        ja_bert, phones, tone, language = self.get_text(
             text, word2ph, phones, tone, language, audiopath
         )
 
         spec, wav = self.get_audio(audiopath)
         sid = torch.LongTensor([int(self.spk_map[sid])])
         style_vec = torch.FloatTensor(np.load(f"{audiopath}.npy"))
-        if self.use_jp_extra:
-            return (phones, spec, wav, sid, tone, language, ja_bert, style_vec)
-        else:
-            return (
-                phones,
-                spec,
-                wav,
-                sid,
-                tone,
-                language,
-                bert,
-                ja_bert,
-                en_bert,
-                style_vec,
-            )
+        # v3.0+: Always JP-Extra format
+        return (phones, spec, wav, sid, tone, language, ja_bert, style_vec)
 
     def get_audio(self, filename):
         audio, sampling_rate = load_wav_to_torch(filename)
@@ -158,6 +144,12 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
         return spec, audio_norm
 
     def get_text(self, text, word2ph, phone, tone, language_str, wav_path):
+        # v3.0+: Only JP is supported
+        if language_str != "JP":
+            raise ValueError(
+                f"Only JP language is supported in v3.0+, got: {language_str}"
+            )
+
         phone, tone, language = cleaned_text_to_sequence(phone, tone, language_str)
         if self.add_blank:
             phone = commons.intersperse(phone, 0)
@@ -168,28 +160,16 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
             word2ph[0] += 1
         bert_path = wav_path.replace(".wav", ".bert.pt")
         try:
-            bert_ori = torch.load(bert_path)
-            assert bert_ori.shape[-1] == len(phone)
+            ja_bert = torch.load(bert_path)
+            assert ja_bert.shape[-1] == len(phone)
         except Exception as e:
             logger.warning("Bert load Failed")
             logger.warning(e)
 
-        if language_str == "ZH":
-            bert = bert_ori
-            ja_bert = torch.zeros(1024, len(phone))
-            en_bert = torch.zeros(1024, len(phone))
-        elif language_str == "JP":
-            bert = torch.zeros(1024, len(phone))
-            ja_bert = bert_ori
-            en_bert = torch.zeros(1024, len(phone))
-        elif language_str == "EN":
-            bert = torch.zeros(1024, len(phone))
-            ja_bert = torch.zeros(1024, len(phone))
-            en_bert = bert_ori
         phone = torch.LongTensor(phone)
         tone = torch.LongTensor(tone)
         language = torch.LongTensor(language)
-        return bert, ja_bert, en_bert, phone, tone, language
+        return ja_bert, phone, tone, language
 
     def get_sid(self, sid):
         sid = torch.LongTensor([int(sid)])
@@ -203,11 +183,10 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
 
 
 class TextAudioSpeakerCollate:
-    """Zero-pads model inputs and targets"""
+    """Zero-pads model inputs and targets (JP-Extra format only in v3.0+)"""
 
-    def __init__(self, return_ids=False, use_jp_extra=False):
+    def __init__(self, return_ids=False):
         self.return_ids = return_ids
-        self.use_jp_extra = use_jp_extra
 
     def __call__(self, batch):
         """Collate's training batch from normalized text, audio and speaker identities
@@ -232,11 +211,8 @@ class TextAudioSpeakerCollate:
         text_padded = torch.LongTensor(len(batch), max_text_len)
         tone_padded = torch.LongTensor(len(batch), max_text_len)
         language_padded = torch.LongTensor(len(batch), max_text_len)
-        # This is ZH bert if not use_jp_extra, JA bert if use_jp_extra
+        # v3.0+: JA bert only (JP-Extra format)
         bert_padded = torch.FloatTensor(len(batch), 1024, max_text_len)
-        if not self.use_jp_extra:
-            ja_bert_padded = torch.FloatTensor(len(batch), 1024, max_text_len)
-            en_bert_padded = torch.FloatTensor(len(batch), 1024, max_text_len)
         style_vec = torch.FloatTensor(len(batch), 256)
 
         spec_padded = torch.FloatTensor(len(batch), batch[0][1].size(0), max_spec_len)
@@ -247,9 +223,6 @@ class TextAudioSpeakerCollate:
         spec_padded.zero_()
         wav_padded.zero_()
         bert_padded.zero_()
-        if not self.use_jp_extra:
-            ja_bert_padded.zero_()
-            en_bert_padded.zero_()
         style_vec.zero_()
 
         for i in range(len(ids_sorted_decreasing)):
@@ -278,46 +251,22 @@ class TextAudioSpeakerCollate:
             bert = row[6]
             bert_padded[i, :, : bert.size(1)] = bert
 
-            if self.use_jp_extra:
-                style_vec[i, :] = row[7]
-            else:
-                ja_bert = row[7]
-                ja_bert_padded[i, :, : ja_bert.size(1)] = ja_bert
+            style_vec[i, :] = row[7]
 
-                en_bert = row[8]
-                en_bert_padded[i, :, : en_bert.size(1)] = en_bert
-                style_vec[i, :] = row[9]
-
-        if self.use_jp_extra:
-            return (
-                text_padded,
-                text_lengths,
-                spec_padded,
-                spec_lengths,
-                wav_padded,
-                wav_lengths,
-                sid,
-                tone_padded,
-                language_padded,
-                bert_padded,
-                style_vec,
-            )
-        else:
-            return (
-                text_padded,
-                text_lengths,
-                spec_padded,
-                spec_lengths,
-                wav_padded,
-                wav_lengths,
-                sid,
-                tone_padded,
-                language_padded,
-                bert_padded,
-                ja_bert_padded,
-                en_bert_padded,
-                style_vec,
-            )
+        # v3.0+: Always JP-Extra format
+        return (
+            text_padded,
+            text_lengths,
+            spec_padded,
+            spec_lengths,
+            wav_padded,
+            wav_lengths,
+            sid,
+            tone_padded,
+            language_padded,
+            bert_padded,
+            style_vec,
+        )
 
 
 class DistributedBucketSampler(torch.utils.data.distributed.DistributedSampler):

@@ -86,14 +86,7 @@ examples = [
 この分野の最新の研究成果を使うと、より自然で表現豊かな音声の生成が可能である。深層学習の応用により、感情やアクセントを含む声質の微妙な変化も再現することが出来る。""",
         "JP",
     ],
-    [
-        "Speech synthesis is the artificial production of human speech. A computer system used for this purpose is called a speech synthesizer, and can be implemented in software or hardware products.",
-        "EN",
-    ],
-    [
-        "语音合成是人工制造人类语音。用于此目的的计算机系统称为语音合成器，可以通过软件或硬件产品实现。",
-        "ZH",
-    ],
+    # EN and ZH examples removed in v3.0.0 (JP-only)
 ]
 
 initial_md = """
@@ -204,7 +197,9 @@ def make_both_non_interactive():
     """Disable both TTS and streaming buttons."""
     return (
         gr.update(interactive=False, value="音声合成（モデルをロードしてください）"),
-        gr.update(interactive=False, value="ストリーミング合成（モデルをロードしてください）"),
+        gr.update(
+            interactive=False, value="ストリーミング合成（モデルをロードしてください）"
+        ),
     )
 
 
@@ -273,6 +268,7 @@ def create_inference_app(model_holder: TTSModelHolder) -> gr.Blocks:
     ):
         # Update dtype settings before loading model
         import torch
+
         dtype_map = {
             "FP32": None,
             "FP16": torch.float16,
@@ -283,7 +279,9 @@ def create_inference_app(model_holder: TTSModelHolder) -> gr.Blocks:
         # If dtype settings changed, force model reload by unloading and clearing current model
         if model_holder.model_dtype != new_dtype:
             if model_holder.current_model is not None:
-                logger.info(f"Dtype settings changed from {model_holder.model_dtype} to {new_dtype}, unloading current model")
+                logger.info(
+                    f"Dtype settings changed from {model_holder.model_dtype} to {new_dtype}, unloading current model"
+                )
                 model_holder.current_model.unload()
             model_holder.current_model = None
 
@@ -417,7 +415,9 @@ def create_inference_app(model_holder: TTSModelHolder) -> gr.Blocks:
         # If dtype settings changed, force model reload
         if model_holder.model_dtype != new_dtype:
             if model_holder.current_model is not None:
-                logger.info(f"Dtype settings changed from {model_holder.model_dtype} to {new_dtype}, unloading current model")
+                logger.info(
+                    f"Dtype settings changed from {model_holder.model_dtype} to {new_dtype}, unloading current model"
+                )
                 model_holder.current_model.unload()
             model_holder.current_model = None
 
@@ -708,7 +708,8 @@ def create_inference_app(model_holder: TTSModelHolder) -> gr.Blocks:
                                         outputs=[null_model_path],
                                     )
                                     null_model_path.change(
-                                        make_both_non_interactive, outputs=[tts_button, stream_button]
+                                        make_both_non_interactive,
+                                        outputs=[tts_button, stream_button],
                                     )
                                     # 愚直すぎるのでもう少しなんとかしたい
                                     null_model_path.change(
@@ -902,7 +903,9 @@ def create_inference_app(model_holder: TTSModelHolder) -> gr.Blocks:
             outputs=[model_path],
         )
 
-        model_path.change(make_both_non_interactive, outputs=[tts_button, stream_button])
+        model_path.change(
+            make_both_non_interactive, outputs=[tts_button, stream_button]
+        )
 
         # Force model reload when dtype settings change
         dtype_dropdown.change(
@@ -917,8 +920,8 @@ def create_inference_app(model_holder: TTSModelHolder) -> gr.Blocks:
 
         def load_model_with_stream_button(model_name, model_path):
             """Wrapper to add stream button enablement."""
-            style_dropdown, tts_btn, speaker_dropdown = model_holder.get_model_for_gradio(
-                model_name, model_path
+            style_dropdown, tts_btn, speaker_dropdown = (
+                model_holder.get_model_for_gradio(model_name, model_path)
             )
             stream_btn = gr.Button(interactive=True, value="ストリーミング合成")
             return style_dropdown, tts_btn, speaker_dropdown, stream_btn

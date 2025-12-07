@@ -92,9 +92,8 @@ TTSModelHolder(..., model_dtype=torch.float16)  # or torch.bfloat16
 
 | File | Changes |
 |------|---------|
-| `style_bert_vits2/models/infer.py` | Added `infer_stream`, `model_dtype` support |
-| `style_bert_vits2/models/models.py` | Added dtype handling in inference |
-| `style_bert_vits2/models/models_jp_extra.py` | Added dtype handling in inference |
+| `style_bert_vits2/models/infer.py` | Added `infer_stream`, `model_dtype` support, vocab detection |
+| `style_bert_vits2/models/models.py` | Added dtype handling in inference (JP-Extra only, renamed from `models_jp_extra.py`) |
 | `style_bert_vits2/tts_model.py` | Added `infer_stream`, `model_dtype`, updated `convert_to_16_bit_wav` |
 | `style_bert_vits2/nlp/japanese/normalizer.py` | Ported improved normalization |
 | `style_bert_vits2/nlp/japanese/mora_list.py` | Added pyopenjtalk-plus morae |
@@ -102,8 +101,6 @@ TTSModelHolder(..., model_dtype=torch.float16)  # or torch.bfloat16
 | `style_bert_vits2/nlp/japanese/user_dict/__init__.py` | Load all `dict_data/**/*.dic` files (aivis_dictionaries) |
 | `style_bert_vits2/nlp/japanese/user_dict/word_model.py` | Updated mora validation rules |
 | `style_bert_vits2/nlp/japanese/pyopenjtalk_worker/__init__.py` | Accept list of dictionary paths, auto-reconnect |
-| `style_bert_vits2/nlp/english/g2p.py` | Added short_form_dict support |
-| `style_bert_vits2/nlp/english/cmudict.py` | Added `get_shortform_dict()` |
 | `scripts/gradio_tabs/inference.py` | Added streaming UI with chunk config |
 | `scripts/server_fastapi.py` | Added `/voice/stream` endpoint |
 

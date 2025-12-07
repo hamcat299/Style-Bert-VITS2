@@ -22,21 +22,15 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: CPython",
 ]
 dependencies = [
-  "cmudict",
-  "cn2an",
   "e2k @ git+https://github.com/tsukumijima/e2k.git@master",
-  "g2p_en",
   "jaconv",
-  "jieba",
   "loguru",
-  "nltk",
   "num2words",
   "numba",
   "numpy",
   "onnxruntime",
   "pydantic",
   "pyopenjtalk-plus",
-  "pypinyin",
   "pyworld-prebuilt",
   "safetensors",
   "transformers",
@@ -48,20 +42,20 @@ Issues = "https://github.com/litagin02/Style-Bert-VITS2/issues"
 Source = "https://github.com/litagin02/Style-Bert-VITS2"
 
 [project.optional-dependencies]
-torch-cpu = ["torch>=2.0.0", "torchaudio>=2.0.0"]
-torch-cu128 = ["torch>=2.0.0", "torchaudio>=2.0.0"]
+cpu = ["torch>=2.9", "torchaudio>=2.9"]
+cu128 = ["torch>=2.9", "torchaudio>=2.9"]
 
 [tool.uv]
-conflicts = [[{ extra = "torch-cpu" }, { extra = "torch-cu128" }]]
+conflicts = [[{ extra = "cpu" }, { extra = "cu128" }]]
 
 [tool.uv.sources]
 torch = [
-  { index = "pytorch-cpu", extra = "torch-cpu" },
-  { index = "pytorch-cu128", extra = "torch-cu128" },
+  { index = "pytorch-cpu", extra = "cpu" },
+  { index = "pytorch-cu128", extra = "cu128" },
 ]
 torchaudio = [
-  { index = "pytorch-cpu", extra = "torch-cpu" },
-  { index = "pytorch-cu128", extra = "torch-cu128" },
+  { index = "pytorch-cpu", extra = "cpu" },
+  { index = "pytorch-cu128", extra = "cu128" },
 ]
 
 [[tool.uv.index]]
@@ -84,7 +78,7 @@ dev = [
     "onnxconverter-common",
     "onnxscript",
     "onnxsim-prebuilt",
-    "pyannote-audio>4",
+    "pyannote-audio==4.0.1",  # 4.0.2以降は torch==2.8.0 と pin されており 2.9 以降と競合するため
     "pyloudnorm",
     "pytest",
     "rich",
@@ -125,8 +119,8 @@ tests = ["tests", "*/style-bert-vits2/tests"]
 [tool.coverage.report]
 exclude_lines = ["no cov", "if __name__ == .__main__.:", "if TYPE_CHECKING:"]
 
-[tool.ruff]
-extend-select = ["I"]
+[tool.ruff.lint]
+select = ["I"]
 
 [tool.ruff.lint.isort]
 lines-after-imports = 2

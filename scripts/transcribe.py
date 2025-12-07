@@ -170,11 +170,17 @@ if __name__ == "__main__":
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
-    wav_files = [f for f in input_dir.rglob("*.wav") if f.is_file()]
-    wav_files = sorted(wav_files, key=lambda x: str(x))
-    logger.info(f"Found {len(wav_files)} WAV files")
-    if len(wav_files) == 0:
-        logger.warning(f"No WAV files found in {input_dir}")
+    # Support multiple audio formats
+    SUPPORTED_AUDIO_EXTENSIONS = {".wav", ".mp3", ".ogg", ".flac", ".opus", ".m4a"}
+    audio_files = [
+        f
+        for f in input_dir.rglob("*")
+        if f.is_file() and f.suffix.lower() in SUPPORTED_AUDIO_EXTENSIONS
+    ]
+    audio_files = sorted(audio_files, key=lambda x: str(x))
+    logger.info(f"Found {len(audio_files)} audio files")
+    if len(audio_files) == 0:
+        logger.warning(f"No audio files found in {input_dir}")
         sys.exit(1)
 
     if output_file.exists():
@@ -197,7 +203,7 @@ if __name__ == "__main__":
     logger.info(f"Loading HF Whisper model ({model_id})")
 
     transcribe_files_with_hf_whisper(
-        audio_files=wav_files,
+        audio_files=audio_files,
         model_id=model_id,
         output_file=output_file,
         model_name=model_name,

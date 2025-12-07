@@ -195,7 +195,13 @@ def measure_infer_stream_performance(
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        return first_chunk_time or 0.0, total_time, audio_duration, chunk_count, audio_chunks
+        return (
+            first_chunk_time or 0.0,
+            total_time,
+            audio_duration,
+            chunk_count,
+            audio_chunks,
+        )
 
 
 def run_benchmark(
@@ -305,9 +311,11 @@ def run_benchmark(
             # 通常の infer() を測定 (OOMをキャッチして続行)
             if not normal_oom:
                 try:
-                    infer_time, infer_duration, normal_audio = measure_infer_performance(
-                        model,
-                        text,
+                    infer_time, infer_duration, normal_audio = (
+                        measure_infer_performance(
+                            model,
+                            text,
+                        )
                     )
                     infer_times.append(infer_time)
                     infer_durations.append(infer_duration)
@@ -329,11 +337,15 @@ def run_benchmark(
             # ストリーミング版 infer_stream() を測定 (OOMをキャッチして続行)
             if not stream_oom:
                 try:
-                    stream_first_time, stream_total_time, stream_duration, chunk_count, stream_chunks = (
-                        measure_infer_stream_performance(
-                            model,
-                            text,
-                        )
+                    (
+                        stream_first_time,
+                        stream_total_time,
+                        stream_duration,
+                        chunk_count,
+                        stream_chunks,
+                    ) = measure_infer_stream_performance(
+                        model,
+                        text,
                     )
                     stream_first_times.append(stream_first_time)
                     stream_total_times.append(stream_total_time)
@@ -354,8 +366,14 @@ def run_benchmark(
                     stream_oom = True
 
             # 結果を表示
-            normal_str = f"通常={infer_time:.3f}s" if infer_time is not None else "通常=OOM"
-            stream_str = f"Stream初回={stream_first_time:.3f}s, Stream合計={stream_total_time:.3f}s, Chunks={chunk_count}" if stream_first_time is not None else "Stream=OOM"
+            normal_str = (
+                f"通常={infer_time:.3f}s" if infer_time is not None else "通常=OOM"
+            )
+            stream_str = (
+                f"Stream初回={stream_first_time:.3f}s, Stream合計={stream_total_time:.3f}s, Chunks={chunk_count}"
+                if stream_first_time is not None
+                else "Stream=OOM"
+            )
             print(f"  Run {run + 1}: {normal_str}, {stream_str}")
 
             # 両方OOMなら終了
@@ -395,27 +413,79 @@ def run_benchmark(
         # 平均値を計算 (OOMの場合はNone)
         avg_infer_time = np.mean(infer_times) if infer_times else None
         avg_infer_duration = np.mean(infer_durations) if infer_durations else None
-        avg_stream_first_time = np.mean(stream_first_times) if stream_first_times else None
-        avg_stream_total_time = np.mean(stream_total_times) if stream_total_times else None
+        avg_stream_first_time = (
+            np.mean(stream_first_times) if stream_first_times else None
+        )
+        avg_stream_total_time = (
+            np.mean(stream_total_times) if stream_total_times else None
+        )
         avg_stream_duration = np.mean(stream_durations) if stream_durations else None
-        avg_chunk_count = int(np.mean(stream_chunk_counts)) if stream_chunk_counts else None
+        avg_chunk_count = (
+            int(np.mean(stream_chunk_counts)) if stream_chunk_counts else None
+        )
 
         # RTF (Real-Time Factor) = inference_time / audio_duration
         # RTF < 1.0 means faster than real-time, RTF > 1.0 means slower
-        rtf_normal = avg_infer_time / avg_infer_duration if (avg_infer_time and avg_infer_duration and avg_infer_duration > 0) else None
-        rtf_stream_total = avg_stream_total_time / avg_stream_duration if (avg_stream_total_time and avg_stream_duration and avg_stream_duration > 0) else None
-        rtf_stream_first = avg_stream_first_time / avg_stream_duration if (avg_stream_first_time and avg_stream_duration and avg_stream_duration > 0) else None
+        rtf_normal = (
+            avg_infer_time / avg_infer_duration
+            if (avg_infer_time and avg_infer_duration and avg_infer_duration > 0)
+            else None
+        )
+        rtf_stream_total = (
+            avg_stream_total_time / avg_stream_duration
+            if (
+                avg_stream_total_time
+                and avg_stream_duration
+                and avg_stream_duration > 0
+            )
+            else None
+        )
+        rtf_stream_first = (
+            avg_stream_first_time / avg_stream_duration
+            if (
+                avg_stream_first_time
+                and avg_stream_duration
+                and avg_stream_duration > 0
+            )
+            else None
+        )
 
         # 結果を保存 (OOMの場合はNoneを許容)
         # 音声長はストリーミングの結果から取得 (OOMでも取れる可能性がある)
-        actual_duration = avg_stream_duration if avg_stream_duration else avg_infer_duration
+        actual_duration = (
+            avg_stream_duration if avg_stream_duration else avg_infer_duration
+        )
 
         # 効率とオーバーヘッドの計算 (OOMを考慮)
-        efficiency_infer = (avg_infer_duration / avg_infer_time) if (avg_infer_time and avg_infer_duration and avg_infer_time > 0) else None
-        efficiency_stream = (avg_stream_duration / avg_stream_total_time) if (avg_stream_total_time and avg_stream_duration and avg_stream_total_time > 0) else None
-        latency_improvement = (avg_infer_time - avg_stream_first_time) if (avg_infer_time is not None and avg_stream_first_time is not None) else None
-        overhead = (avg_stream_total_time - avg_infer_time) if (avg_stream_total_time is not None and avg_infer_time is not None) else None
-        overhead_pct = ((avg_stream_total_time - avg_infer_time) / avg_infer_time * 100) if (avg_infer_time and avg_stream_total_time and avg_infer_time > 0) else None
+        efficiency_infer = (
+            (avg_infer_duration / avg_infer_time)
+            if (avg_infer_time and avg_infer_duration and avg_infer_time > 0)
+            else None
+        )
+        efficiency_stream = (
+            (avg_stream_duration / avg_stream_total_time)
+            if (
+                avg_stream_total_time
+                and avg_stream_duration
+                and avg_stream_total_time > 0
+            )
+            else None
+        )
+        latency_improvement = (
+            (avg_infer_time - avg_stream_first_time)
+            if (avg_infer_time is not None and avg_stream_first_time is not None)
+            else None
+        )
+        overhead = (
+            (avg_stream_total_time - avg_infer_time)
+            if (avg_stream_total_time is not None and avg_infer_time is not None)
+            else None
+        )
+        overhead_pct = (
+            ((avg_stream_total_time - avg_infer_time) / avg_infer_time * 100)
+            if (avg_infer_time and avg_stream_total_time and avg_infer_time > 0)
+            else None
+        )
 
         result = {
             "text": text,
@@ -440,19 +510,27 @@ def run_benchmark(
         results.append(result)
 
         # 個別結果を表示
-        duration_str = f"音声長: {actual_duration:.2f}秒" if actual_duration else "音声長: N/A"
+        duration_str = (
+            f"音声長: {actual_duration:.2f}秒" if actual_duration else "音声長: N/A"
+        )
         print(f"  {duration_str}")
         if avg_infer_time is not None:
             print(f"  通常推論: {avg_infer_time:.3f}秒 (RTF: {rtf_normal:.3f})")
         else:
             print(f"  通常推論: OOM")
         if avg_stream_first_time is not None:
-            print(f"  Stream初回: {avg_stream_first_time:.3f}秒 (RTF to first: {rtf_stream_first:.3f})")
-            print(f"  Stream合計: {avg_stream_total_time:.3f}秒 (Chunks: {avg_chunk_count}, RTF: {rtf_stream_total:.3f})")
+            print(
+                f"  Stream初回: {avg_stream_first_time:.3f}秒 (RTF to first: {rtf_stream_first:.3f})"
+            )
+            print(
+                f"  Stream合計: {avg_stream_total_time:.3f}秒 (Chunks: {avg_chunk_count}, RTF: {rtf_stream_total:.3f})"
+            )
         else:
             print(f"  Stream: OOM")
         if latency_improvement is not None:
-            print(f"  レイテンシ改善: {latency_improvement:.3f}秒 ({latency_improvement/avg_infer_time*100:.1f}%)")
+            print(
+                f"  レイテンシ改善: {latency_improvement:.3f}秒 ({latency_improvement / avg_infer_time * 100:.1f}%)"
+            )
             print(f"  オーバーヘッド: {overhead:.3f}秒 ({overhead_pct:+.1f}%)")
         elif normal_oom and not stream_oom:
             print(f"  ** 通常推論はOOMだがStreamは成功! **")
@@ -471,18 +549,38 @@ def run_benchmark(
 
     for result in results:
         # Format values with OOM handling
-        dur_str = f"{result['actual_duration']:>7.2f}s" if result['actual_duration'] else "    N/A"
-        infer_str = f"{result['infer_time']:>7.3f}s" if result['infer_time'] else "    OOM"
-        rtf_n_str = f"{result['rtf_normal']:>6.3f}" if result['rtf_normal'] else "   OOM"
-        first_str = f"{result['stream_first_time']:>11.3f}s" if result['stream_first_time'] else "        OOM"
-        total_str = f"{result['stream_total_time']:>11.3f}s" if result['stream_total_time'] else "        OOM"
-        rtf_s_str = f"{result['rtf_stream_total']:>6.3f}" if result['rtf_stream_total'] else "   OOM"
-        chunk_str = f"{result['chunk_count']:>6}" if result['chunk_count'] else "   OOM"
+        dur_str = (
+            f"{result['actual_duration']:>7.2f}s"
+            if result["actual_duration"]
+            else "    N/A"
+        )
+        infer_str = (
+            f"{result['infer_time']:>7.3f}s" if result["infer_time"] else "    OOM"
+        )
+        rtf_n_str = (
+            f"{result['rtf_normal']:>6.3f}" if result["rtf_normal"] else "   OOM"
+        )
+        first_str = (
+            f"{result['stream_first_time']:>11.3f}s"
+            if result["stream_first_time"]
+            else "        OOM"
+        )
+        total_str = (
+            f"{result['stream_total_time']:>11.3f}s"
+            if result["stream_total_time"]
+            else "        OOM"
+        )
+        rtf_s_str = (
+            f"{result['rtf_stream_total']:>6.3f}"
+            if result["rtf_stream_total"]
+            else "   OOM"
+        )
+        chunk_str = f"{result['chunk_count']:>6}" if result["chunk_count"] else "   OOM"
 
-        if result['latency_improvement'] is not None:
-            lat_str = f"{result['latency_improvement']:>+7.3f}s ({result['latency_improvement']/result['infer_time']*100:>+5.1f}%)"
+        if result["latency_improvement"] is not None:
+            lat_str = f"{result['latency_improvement']:>+7.3f}s ({result['latency_improvement'] / result['infer_time'] * 100:>+5.1f}%)"
             ovh_str = f"{result['overhead']:>+7.3f}s ({result['overhead_pct']:>+5.1f}%)"
-        elif result['normal_oom'] and not result['stream_oom']:
+        elif result["normal_oom"] and not result["stream_oom"]:
             lat_str = "   N/A (Normal OOM)"
             ovh_str = "  Stream OK!"
         else:
@@ -505,22 +603,36 @@ def run_benchmark(
     print("\n分析:")
 
     # OOMケースをカウント
-    normal_oom_count = sum(1 for r in results if r['normal_oom'])
-    stream_oom_count = sum(1 for r in results if r['stream_oom'])
+    normal_oom_count = sum(1 for r in results if r["normal_oom"])
+    stream_oom_count = sum(1 for r in results if r["stream_oom"])
     if normal_oom_count > 0 or stream_oom_count > 0:
         print(f"- OOM発生: 通常={normal_oom_count}件, Stream={stream_oom_count}件")
         # Streamが成功した場合を強調
-        stream_only_success = sum(1 for r in results if r['normal_oom'] and not r['stream_oom'])
+        stream_only_success = sum(
+            1 for r in results if r["normal_oom"] and not r["stream_oom"]
+        )
         if stream_only_success > 0:
-            print(f"  ** Streamのみ成功: {stream_only_success}件 (通常推論ではOOMだったがStreamは成功!) **")
+            print(
+                f"  ** Streamのみ成功: {stream_only_success}件 (通常推論ではOOMだったがStreamは成功!) **"
+            )
 
     # 2秒以上のケースでの改善効果を確認 (OOMを除く)
-    long_audio_results = [r for r in results if r["actual_duration"] and r["actual_duration"] >= 2.0 and r["latency_improvement"] is not None]
+    long_audio_results = [
+        r
+        for r in results
+        if r["actual_duration"]
+        and r["actual_duration"] >= 2.0
+        and r["latency_improvement"] is not None
+    ]
     if long_audio_results:
-        avg_improvement = np.mean([r["latency_improvement"] for r in long_audio_results])
+        avg_improvement = np.mean(
+            [r["latency_improvement"] for r in long_audio_results]
+        )
         avg_overhead = np.mean([r["overhead_pct"] for r in long_audio_results])
         avg_rtf_normal_long = np.mean([r["rtf_normal"] for r in long_audio_results])
-        avg_rtf_stream_long = np.mean([r["rtf_stream_total"] for r in long_audio_results])
+        avg_rtf_stream_long = np.mean(
+            [r["rtf_stream_total"] for r in long_audio_results]
+        )
         print(f"- 2秒以上の音声 (OOM除く):")
         print(f"  - レイテンシ改善: 平均 {avg_improvement:.3f}秒")
         print(f"  - オーバーヘッド: 平均 {avg_overhead:+.1f}%")
@@ -539,7 +651,9 @@ def run_benchmark(
         print(f"  - RTF: 平均 {avg_rtf_normal:.3f} (< 1.0 = faster than real-time)")
 
     if stream_valid_results:
-        avg_stream_efficiency = np.mean([r["efficiency_stream"] for r in stream_valid_results])
+        avg_stream_efficiency = np.mean(
+            [r["efficiency_stream"] for r in stream_valid_results]
+        )
         avg_rtf_stream = np.mean([r["rtf_stream_total"] for r in stream_valid_results])
         print(f"- ストリーミング (OOM除く {len(stream_valid_results)}件):")
         print(f"  - 推論効率: {avg_stream_efficiency:.2f}x (音声長/推論時間)")
@@ -549,7 +663,9 @@ def run_benchmark(
     both_valid = [r for r in results if r["overhead_pct"] is not None]
     if both_valid:
         avg_overhead = np.mean([r["overhead_pct"] for r in both_valid])
-        print(f"- 平均オーバーヘッド (両方成功 {len(both_valid)}件): {avg_overhead:+.1f}%")
+        print(
+            f"- 平均オーバーヘッド (両方成功 {len(both_valid)}件): {avg_overhead:+.1f}%"
+        )
 
     print("=" * 120)
 

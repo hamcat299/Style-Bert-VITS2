@@ -25,7 +25,6 @@ model_file = hf_hub_download(
     repo_id="pyannote/wespeaker-voxceleb-resnet34-LM",
     filename="pytorch_model.bin",
 )
-logger.info(f"Downloaded model file from HF Hub: {model_file}")
 model = WeSpeakerResNet34.load_from_checkpoint(model_file, weights_only=False)
 inference = Inference(model, window="whole")
 device = torch.device(config.device)

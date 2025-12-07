@@ -47,9 +47,6 @@ from style_bert_vits2.constants import (
 )
 from style_bert_vits2.models.infer import get_text
 from style_bert_vits2.models.models import SynthesizerTrn
-from style_bert_vits2.models.models_jp_extra import (
-    SynthesizerTrn as SynthesizerTrnJPExtra,
-)
 from style_bert_vits2.tts_model import TTSModel
 
 
@@ -171,9 +168,8 @@ if __name__ == "__main__":
             assert tts_model.net_g is not None, "Model is not loaded"
 
             # 音声合成に必要な BERT 特徴量・音素列・アクセント列・言語 ID を取得
-            # JP-Extra モデルアーキテクチャの場合、bert (中国語の BERT 特徴量) や en_bert (英語の BERT 特徴量) は
-            # torch.zeros() で適当に埋められており、推論には ja_bert (日本語の BERT 特徴量) のみが使用される
-            bert, ja_bert, en_bert, phones, tones, lang_ids = get_text(
+            # v3.0.0 以降は JP-Extra モデルのみサポートされ、ja_bert (日本語の BERT 特徴量) のみが使用される
+            ja_bert, phones, tones, lang_ids = get_text(
                 "今日はいい天気ですね。",
                 Languages.JP,
                 tts_model.hyper_parameters,
@@ -191,9 +187,7 @@ if __name__ == "__main__":
             x_tst = phones.to(device).unsqueeze(0)
             tones = tones.to(device).unsqueeze(0)
             lang_ids = lang_ids.to(device).unsqueeze(0)
-            bert = bert.to(device).unsqueeze(0)
             ja_bert = ja_bert.to(device).unsqueeze(0)
-            en_bert = en_bert.to(device).unsqueeze(0)
             x_tst_lengths = torch.LongTensor([phones.size(0)]).to(device)
             style_vec_tensor = torch.from_numpy(style_vector).to(device).unsqueeze(0)
             sid = 0
@@ -203,9 +197,16 @@ if __name__ == "__main__":
             noise_scale = torch.tensor(0.667)
             noise_scale_w = torch.tensor(0.8)
 
+            # v3.0.0 以降は JP-Extra モデルのみサポート
+            if not isinstance(tts_model.net_g, SynthesizerTrn):
+                raise ValueError(
+                    "Only JP-Extra model architecture is supported in v3.0.0+. "
+                    "Non-JP-Extra models are no longer supported."
+                )
+
             # JP-Extra モデルアーキテクチャ向けの ONNX 変換ロジック
-            if isinstance(tts_model.net_g, SynthesizerTrnJPExtra):
-                # SynthesizerTrnJPExtra の forward メソッドをオーバーライド
+            if True:  # Always JP-Extra in v3.0+
+                # SynthesizerTrn の forward メソッドをオーバーライド
                 def forward_jp_extra(
                     x: torch.Tensor,
                     x_lengths: torch.Tensor,
@@ -221,7 +222,7 @@ if __name__ == "__main__":
                 ) -> tuple[
                     torch.Tensor, torch.Tensor, torch.Tensor, tuple[torch.Tensor, ...]
                 ]:
-                    return cast(SynthesizerTrnJPExtra, tts_model.net_g).infer(
+                    return cast(SynthesizerTrn, tts_model.net_g).infer(
                         x,
                         x_lengths,
                         sid,
@@ -282,103 +283,6 @@ if __name__ == "__main__":
                         "tones": {0: "batch_size", 1: "x_tst_max_length"},
                         "language": {0: "batch_size", 1: "x_tst_max_length"},
                         "bert": {0: "batch_size", 2: "x_tst_max_length"},
-                        "style_vec": {0: "batch_size"},
-                    },
-                    dynamo=False,
-                )
-                print(
-                    f"[bold green]ONNX model exported to {onnx_temp_model_path} ({time.time() - export_start_time:.2f}s)[/bold green]"
-                )
-
-            # 非 JP-Extra モデルアーキテクチャ向けの ONNX 変換ロジック
-            else:
-                # SynthesizerTrn の forward メソッドをオーバーライド
-                def forward_non_jp_extra(
-                    x: torch.Tensor,
-                    x_lengths: torch.Tensor,
-                    sid: torch.Tensor,
-                    tone: torch.Tensor,
-                    language: torch.Tensor,
-                    bert: torch.Tensor,
-                    ja_bert: torch.Tensor,
-                    en_bert: torch.Tensor,
-                    style_vec: torch.Tensor,
-                    length_scale: float = 1.0,
-                    sdp_ratio: float = 0.0,
-                    noise_scale: float = 0.667,
-                    noise_scale_w: float = 0.8,
-                ) -> tuple[
-                    torch.Tensor, torch.Tensor, torch.Tensor, tuple[torch.Tensor, ...]
-                ]:
-                    return cast(SynthesizerTrn, tts_model.net_g).infer(
-                        x,
-                        x_lengths,
-                        sid,
-                        tone,
-                        language,
-                        bert,
-                        ja_bert,
-                        en_bert,
-                        style_vec,
-                        length_scale=length_scale,
-                        sdp_ratio=sdp_ratio,
-                        noise_scale=noise_scale,
-                        noise_scale_w=noise_scale_w,
-                    )
-
-                tts_model.net_g.forward = forward_non_jp_extra  # type: ignore
-
-                # モデルを ONNX に変換
-                print(Rule(characters="=", style=Style(color="blue")))
-                print(
-                    "[bold cyan]Exporting ONNX model... (Architecture: Non-JP-Extra)[/bold cyan]"
-                )
-                print(Rule(characters="=", style=Style(color="blue")))
-                export_start_time = time.time()
-                torch.onnx.export(
-                    model=tts_model.net_g,
-                    args=(
-                        x_tst,
-                        x_tst_lengths,
-                        sid_tensor,
-                        tones,
-                        lang_ids,
-                        bert,
-                        ja_bert,
-                        en_bert,
-                        style_vec_tensor,
-                        length_scale,
-                        sdp_ratio,
-                        noise_scale,
-                        noise_scale_w,
-                    ),
-                    f=str(onnx_temp_model_path),
-                    verbose=False,
-                    input_names=[
-                        "x_tst",
-                        "x_tst_lengths",
-                        "sid",
-                        "tones",
-                        "language",
-                        "bert",
-                        "ja_bert",
-                        "en_bert",
-                        "style_vec",
-                        "length_scale",
-                        "sdp_ratio",
-                        "noise_scale",
-                        "noise_scale_w",
-                    ],
-                    output_names=["output"],
-                    dynamic_axes={
-                        "x_tst": {0: "batch_size", 1: "x_tst_max_length"},
-                        "x_tst_lengths": {0: "batch_size"},
-                        "sid": {0: "batch_size"},
-                        "tones": {0: "batch_size", 1: "x_tst_max_length"},
-                        "language": {0: "batch_size", 1: "x_tst_max_length"},
-                        "bert": {0: "batch_size", 2: "x_tst_max_length"},
-                        "ja_bert": {0: "batch_size", 2: "x_tst_max_length"},
-                        "en_bert": {0: "batch_size", 2: "x_tst_max_length"},
                         "style_vec": {0: "batch_size"},
                     },
                     dynamo=False,

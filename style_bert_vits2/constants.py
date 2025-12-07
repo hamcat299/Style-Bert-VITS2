@@ -15,25 +15,22 @@ BASE_DIR = Path(__file__).parent.parent
 
 
 # 利用可能な言語
-## JP-Extra モデル利用時は JP 以外の言語の音声合成はできない
+# v3.0.0 以降は日本語 (JP) のみサポート
 class Languages(StrEnum):
     JP = "JP"
-    EN = "EN"
-    ZH = "ZH"
 
 
 # 言語ごとのデフォルトの BERT モデルのパス
 DEFAULT_BERT_MODEL_PATHS = {
     Languages.JP: "ku-nlp/deberta-v2-large-japanese-char-wwm",
-    Languages.EN: "microsoft/deberta-v3-large",
-    Languages.ZH: "hfl/chinese-roberta-wwm-ext-large",
 }
+
+# デフォルトの WavLM (SLM) モデルのパス (学習時のみ使用)
+DEFAULT_SLM_MODEL = "microsoft/wavlm-base-plus"
 
 # 言語ごとのデフォルトの BERT モデル (ONNX 版) のパス
 DEFAULT_ONNX_BERT_MODEL_PATHS = {
     Languages.JP: BASE_DIR / "bert" / "deberta-v2-large-japanese-char-wwm-onnx",
-    Languages.EN: BASE_DIR / "bert" / "deberta-v3-large-onnx",
-    Languages.ZH: BASE_DIR / "bert" / "chinese-roberta-wwm-ext-large-onnx",
 }
 
 # デフォルトのユーザー辞書ディレクトリ

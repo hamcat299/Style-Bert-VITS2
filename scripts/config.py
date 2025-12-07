@@ -81,11 +81,17 @@ class Config:
             if "dataset_path" in yaml_config and yaml_config["dataset_path"]:
                 dataset_path = Path(yaml_config["dataset_path"])
             else:
-                dataset_path = path_config.dataset_root / model_name if model_name else path_config.dataset_root
+                dataset_path = (
+                    path_config.dataset_root / model_name
+                    if model_name
+                    else path_config.dataset_root
+                )
             self.dataset_path = dataset_path
             self.dataset_root = path_config.dataset_root
             self.assets_root = path_config.assets_root
-            self.out_dir = self.assets_root / model_name if model_name else self.assets_root
+            self.out_dir = (
+                self.assets_root / model_name if model_name else self.assets_root
+            )
 
             # Global defaults
             device = yaml_config.get("device", "cuda")

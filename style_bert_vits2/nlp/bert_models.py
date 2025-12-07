@@ -1,25 +1,21 @@
 """
-Style-Bert-VITS2 の学習・推論に必要な各言語ごとの BERT モデルをロード/取得するためのモジュール。
+Style-Bert-VITS2 の学習・推論に必要な BERT モデルをロード/取得するためのモジュール。
 
-オリジナルの Bert-VITS2 では各言語ごとの BERT モデルが初回インポート時にハードコードされたパスから「暗黙的に」ロードされているが、
-場合によっては多重にロードされて非効率なほか、BERT モデルのロード元のパスがハードコードされているためライブラリ化ができない。
-
-そこで、ライブラリの利用前に、音声合成に利用する言語の BERT モデルだけを「明示的に」ロードできるようにした。
-一度 load_model/tokenizer() で当該言語の BERT モデルがロードされていれば、ライブラリ内部のどこからでもロード済みのモデル/トークナイザーを取得できる。
+v3.0.0 以降は日本語 (JP) のみサポート。
+ロードにはそれなりに時間がかかるため、ライブラリ利用前に明示的に pretrained_model_name_or_path を指定してロードしておくべき。
+一度 load_model/tokenizer() で BERT モデルがロードされていれば、ライブラリ内部のどこからでもロード済みのモデル/トークナイザーを取得できる。
 """
 
 from __future__ import annotations
 
 import gc
 import time
-from typing import TYPE_CHECKING, Optional, Union, cast
+from typing import TYPE_CHECKING, Optional, Union
 
 import torch
 from transformers import (
     AutoModelForMaskedLM,
     AutoTokenizer,
-    DebertaV2Model,
-    DebertaV2TokenizerFast,
     PreTrainedModel,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
@@ -34,12 +30,12 @@ if TYPE_CHECKING:
 
 
 # 各言語ごとのロード済みの BERT モデルを格納する辞書
-__loaded_models: dict[Languages, Union[PreTrainedModel, DebertaV2Model]] = {}
+__loaded_models: dict[Languages, PreTrainedModel] = {}
 
 # 各言語ごとのロード済みの BERT トークナイザーを格納する辞書
 __loaded_tokenizers: dict[
     Languages,
-    Union[PreTrainedTokenizer, PreTrainedTokenizerFast, DebertaV2TokenizerFast],
+    Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
 ] = {}
 
 # 各言語ごとの BERT モデルの現在の dtype を格納する辞書
@@ -51,7 +47,7 @@ def load_model(
     pretrained_model_name_or_path: Optional[str] = None,
     cache_dir: Optional[str] = None,
     revision: str = "main",
-) -> Union[PreTrainedModel, DebertaV2Model]:
+) -> PreTrainedModel:
     """
     指定された言語の BERT モデルをロードし、ロード済みの BERT モデルを返す。
     一度ロードされていれば、ロード済みの BERT モデルを即座に返す。
@@ -59,21 +55,23 @@ def load_model(
     ロードにはそれなりに時間がかかるため、ライブラリ利用前に明示的に pretrained_model_name_or_path を指定してロードしておくべき。
     cache_dir と revision は pretrain_model_name_or_path がリポジトリ名の場合のみ有効。
 
-    Style-Bert-VITS2 では、BERT モデルに下記の 3 つが利用されている。
-    これ以外の BERT モデルを指定した場合は正常に動作しない可能性が高い。
+    Style-Bert-VITS2 v3.0.0 以降は日本語のみサポート:
     - 日本語: ku-nlp/deberta-v2-large-japanese-char-wwm
-    - 英語: microsoft/deberta-v3-large
-    - 中国語: hfl/chinese-roberta-wwm-ext-large
 
     Args:
-        language (Languages): ロードする学習済みモデルの対象言語
+        language (Languages): ロードする学習済みモデルの対象言語 (JP のみサポート)
         pretrained_model_name_or_path (Optional[str]): ロードする学習済みモデルの名前またはパス。指定しない場合はデフォルトのパスが利用される (デフォルト: None)
         cache_dir (Optional[str]): モデルのキャッシュディレクトリ。指定しない場合はデフォルトのキャッシュディレクトリが利用される (デフォルト: None)
         revision (str): モデルの Hugging Face 上の Git リビジョン。指定しない場合は最新の main ブランチの内容が利用される (デフォルト: None)
 
     Returns:
-        Union[PreTrainedModel, DebertaV2Model]: ロード済みの BERT モデル
+        PreTrainedModel: ロード済みの BERT モデル
     """
+
+    if language != Languages.JP:
+        raise ValueError(
+            f"Language {language} not supported. Only JP is supported in v3.0+"
+        )
 
     # すでにロード済みの場合はそのまま返す
     if language in __loaded_models:
@@ -84,23 +82,12 @@ def load_model(
         pretrained_model_name_or_path = str(DEFAULT_BERT_MODEL_PATHS[language])
 
     # BERT モデルをロードし、辞書に格納して返す
-    ## 英語のみ DebertaV2Model でロードする必要がある
     start_time = time.time()
-    if language == Languages.EN:
-        __loaded_models[language] = cast(
-            DebertaV2Model,
-            DebertaV2Model.from_pretrained(
-                pretrained_model_name_or_path,
-                cache_dir=cache_dir,
-                revision=revision,
-            ),
-        )
-    else:
-        __loaded_models[language] = AutoModelForMaskedLM.from_pretrained(
-            pretrained_model_name_or_path,
-            cache_dir=cache_dir,
-            revision=revision,
-        )
+    __loaded_models[language] = AutoModelForMaskedLM.from_pretrained(
+        pretrained_model_name_or_path,
+        cache_dir=cache_dir,
+        revision=revision,
+    )
     logger.info(
         f"Loaded the {language.name} BERT model from {pretrained_model_name_or_path} ({time.time() - start_time:.2f}s)"
     )
@@ -116,7 +103,7 @@ def load_tokenizer(
     pretrained_model_name_or_path: Optional[str] = None,
     cache_dir: Optional[str] = None,
     revision: str = "main",
-) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast, DebertaV2TokenizerFast]:
+) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
     """
     指定された言語の BERT トークナイザーをロードし、ロード済みの BERT トークナイザーを返す。
     一度ロードされていれば、ロード済みの BERT トークナイザーを即座に返す。
@@ -124,21 +111,23 @@ def load_tokenizer(
     ロードにはそれなりに時間がかかるため、ライブラリ利用前に明示的に pretrained_model_name_or_path を指定してロードしておくべき。
     cache_dir と revision は pretrain_model_name_or_path がリポジトリ名の場合のみ有効。
 
-    Style-Bert-VITS2 では、BERT モデルに下記の 3 つが利用されている。
-    これ以外の BERT モデルを指定した場合は正常に動作しない可能性が高い。
+    Style-Bert-VITS2 v3.0.0 以降は日本語のみサポート:
     - 日本語: ku-nlp/deberta-v2-large-japanese-char-wwm
-    - 英語: microsoft/deberta-v3-large
-    - 中国語: hfl/chinese-roberta-wwm-ext-large
 
     Args:
-        language (Languages): ロードする学習済みモデルの対象言語
+        language (Languages): ロードする学習済みモデルの対象言語 (JP のみサポート)
         pretrained_model_name_or_path (Optional[str]): ロードする学習済みモデルの名前またはパス。指定しない場合はデフォルトのパスが利用される (デフォルト: None)
         cache_dir (Optional[str]): モデルのキャッシュディレクトリ。指定しない場合はデフォルトのキャッシュディレクトリが利用される (デフォルト: None)
         revision (str): モデルの Hugging Face 上の Git リビジョン。指定しない場合は最新の main ブランチの内容が利用される (デフォルト: None)
 
     Returns:
-        Union[PreTrainedTokenizer, PreTrainedTokenizerFast, DebertaV2TokenizerFast]: ロード済みの BERT トークナイザー
+        Union[PreTrainedTokenizer, PreTrainedTokenizerFast]: ロード済みの BERT トークナイザー
     """
+
+    if language != Languages.JP:
+        raise ValueError(
+            f"Language {language} not supported. Only JP is supported in v3.0+"
+        )
 
     # すでにロード済みの場合はそのまま返す
     if language in __loaded_tokenizers:
@@ -149,20 +138,12 @@ def load_tokenizer(
         pretrained_model_name_or_path = str(DEFAULT_BERT_MODEL_PATHS[language])
 
     # BERT トークナイザーをロードし、辞書に格納して返す
-    ## 英語のみ DebertaV2TokenizerFast でロードする必要がある
-    if language == Languages.EN:
-        __loaded_tokenizers[language] = DebertaV2TokenizerFast.from_pretrained(
-            pretrained_model_name_or_path,
-            cache_dir=cache_dir,
-            revision=revision,
-        )
-    else:
-        __loaded_tokenizers[language] = AutoTokenizer.from_pretrained(
-            pretrained_model_name_or_path,
-            cache_dir=cache_dir,
-            revision=revision,
-            use_fast=True,  # デフォルトで True だが念のため明示的に指定
-        )
+    __loaded_tokenizers[language] = AutoTokenizer.from_pretrained(
+        pretrained_model_name_or_path,
+        cache_dir=cache_dir,
+        revision=revision,
+        use_fast=True,  # デフォルトで True だが念のため明示的に指定
+    )
     logger.info(
         f"Loaded the {language.name} BERT tokenizer from {pretrained_model_name_or_path}"
     )
@@ -170,7 +151,9 @@ def load_tokenizer(
     return __loaded_tokenizers[language]
 
 
-def transfer_model(language: Languages, device: str, dtype: Optional[torch.dtype] = None) -> None:
+def transfer_model(
+    language: Languages, device: str, dtype: Optional[torch.dtype] = None
+) -> None:
     """
     指定された言語の BERT モデルを、指定されたデバイスに移動する。
     モデルのロード後に推論デバイスを変更したい場合に利用する。

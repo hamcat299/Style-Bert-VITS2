@@ -15,17 +15,18 @@ Idle timeout:
 - This ensures no orphan processes when user closes the app
 """
 
-from multiprocessing.managers import BaseManager
-from typing import Any, Optional, Union
 import atexit
 import os
-import sys
 import subprocess
+import sys
 import tempfile
 import threading
 import time
+from multiprocessing.managers import BaseManager
+from typing import Any, Optional, Union
 
 from style_bert_vits2.logging import logger
+
 
 _AUTH_KEY = b"sbv2_pyopenjtalk_worker"
 _IDLE_TIMEOUT = 300  # seconds (5 minutes - allows for slow model loading)
@@ -62,7 +63,9 @@ def _idle_monitor(timeout: int) -> None:
         time.sleep(5)  # Check every 5 seconds
         idle_time = time.time() - _last_activity
         if idle_time > timeout:
-            logger.info(f"No activity for {timeout}s, shutting down pyopenjtalk worker server")
+            logger.info(
+                f"No activity for {timeout}s, shutting down pyopenjtalk worker server"
+            )
             # Clean up port file
             try:
                 os.remove(_get_port_file())
@@ -87,6 +90,7 @@ def _start_server() -> None:
         def wrapper(*args, **kwargs):
             _update_activity()
             return func(*args, **kwargs)
+
         return wrapper
 
     # Register actual pyopenjtalk functions with activity tracking
@@ -138,7 +142,9 @@ def _start_server() -> None:
     )
     monitor_thread.start()
 
-    logger.info(f"pyopenjtalk worker server started on port {actual_port} (idle timeout: {_IDLE_TIMEOUT}s)")
+    logger.info(
+        f"pyopenjtalk worker server started on port {actual_port} (idle timeout: {_IDLE_TIMEOUT}s)"
+    )
     server.serve_forever()
 
 
@@ -187,10 +193,14 @@ def initialize_worker() -> None:
         manager = _try_connect(port)
         if manager is not None:
             _manager = manager
-            logger.debug(f"Connected to existing pyopenjtalk worker server on port {port}")
+            logger.debug(
+                f"Connected to existing pyopenjtalk worker server on port {port}"
+            )
             return
         else:
-            logger.debug("Port file exists but server not responding, starting new server")
+            logger.debug(
+                "Port file exists but server not responding, starting new server"
+            )
 
     # Start new server process
     logger.debug("Starting new pyopenjtalk worker server")

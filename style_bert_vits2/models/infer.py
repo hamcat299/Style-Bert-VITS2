@@ -1,24 +1,89 @@
 from collections.abc import Iterator
-from typing import Any, Optional, Union, cast
+from typing import Any, Optional, cast
 
 import numpy as np
 import torch
 from numpy.typing import NDArray
+from safetensors import safe_open
 
 from style_bert_vits2.constants import Languages
 from style_bert_vits2.logging import logger
 from style_bert_vits2.models import commons, utils
 from style_bert_vits2.models.hyper_parameters import HyperParameters
 from style_bert_vits2.models.models import SynthesizerTrn
-from style_bert_vits2.models.models_jp_extra import (
-    SynthesizerTrn as SynthesizerTrnJPExtra,
-)
 from style_bert_vits2.nlp import (
     clean_text_with_given_phone_tone,
     cleaned_text_to_sequence,
     extract_bert_feature,
 )
-from style_bert_vits2.nlp.symbols import SYMBOLS
+from style_bert_vits2.nlp.symbols import (
+    LANGUAGE_ID_MAP,
+    LANGUAGE_ID_MAP_V2,
+    LANGUAGE_TONE_START_MAP,
+    LANGUAGE_TONE_START_MAP_V2,
+    NUM_TONES_V2,
+    NUM_TONES_V3,
+    SYMBOLS,
+    SYMBOLS_V2,
+    SYMBOLS_V3,
+)
+
+
+def _detect_vocab_size(model_path: str) -> int:
+    """
+    safetensors ファイルから語彙サイズを検出する。
+
+    Args:
+        model_path: モデルファイルのパス
+
+    Returns:
+        int: 検出された語彙サイズ
+    """
+    if not model_path.endswith(".safetensors"):
+        # .pth/.pt ファイルの場合は v2 (legacy) と仮定
+        return len(SYMBOLS_V2)
+
+    with safe_open(model_path, framework="pt") as f:
+        if "enc_p.emb.weight" in f.keys():
+            emb_shape = f.get_tensor("enc_p.emb.weight").shape
+            return emb_shape[0]
+
+    # フォールバック
+    return len(SYMBOLS_V2)
+
+
+def _get_model_params_for_version(
+    model_path: str,
+) -> tuple[list[str], int, int, int, int]:
+    """
+    モデルファイルに適した SYMBOLS リスト、トーン数、言語数、JP用トーン開始位置、JP用言語IDを返す。
+
+    Args:
+        model_path: モデルファイルのパス
+
+    Returns:
+        tuple: (symbols, n_tones, n_languages, jp_tone_start, jp_language_id)
+    """
+    vocab_size = _detect_vocab_size(model_path)
+
+    if vocab_size == len(SYMBOLS_V2):
+        logger.info(f"Detected legacy v2 model (vocab_size={vocab_size})")
+        # v2: 12 tones (ZH 0-5, JP 6-7, EN 8-11), 3 languages (ZH, JP, EN)
+        jp_tone_start = LANGUAGE_TONE_START_MAP_V2["JP"]  # 6
+        jp_language_id = LANGUAGE_ID_MAP_V2["JP"]  # 1
+        return SYMBOLS_V2, NUM_TONES_V2, 3, jp_tone_start, jp_language_id
+    elif vocab_size == len(SYMBOLS_V3):
+        logger.info(f"Detected v3 model (vocab_size={vocab_size})")
+        # v3: 2 tones (JP only), 1 language (JP only)
+        jp_tone_start = LANGUAGE_TONE_START_MAP["JP"]  # 0
+        jp_language_id = LANGUAGE_ID_MAP["JP"]  # 0
+        return SYMBOLS_V3, NUM_TONES_V3, 1, jp_tone_start, jp_language_id
+    else:
+        # 未知の語彙サイズの場合は v2 にフォールバック
+        logger.warning(f"Unknown vocab size {vocab_size}, falling back to v2 symbols")
+        jp_tone_start = LANGUAGE_TONE_START_MAP_V2["JP"]
+        jp_language_id = LANGUAGE_ID_MAP_V2["JP"]
+        return SYMBOLS_V2, NUM_TONES_V2, 3, jp_tone_start, jp_language_id
 
 
 def get_net_g(
@@ -27,76 +92,62 @@ def get_net_g(
     device: str,
     hps: HyperParameters,
     model_dtype: Optional[torch.dtype] = None,
-) -> Union[SynthesizerTrn, SynthesizerTrnJPExtra]:
-    if version.endswith("JP-Extra"):
-        logger.info("Using JP-Extra model")
-        # use meta device to speed up instantiation
-        with torch.device("meta"):
-            net_g = SynthesizerTrnJPExtra(
-                n_vocab=len(SYMBOLS),
-                spec_channels=hps.data.filter_length // 2 + 1,
-                segment_size=hps.train.segment_size // hps.data.hop_length,
-                n_speakers=hps.data.n_speakers,
-                # hps.model 以下のすべての値を引数に渡す
-                use_spk_conditioned_encoder=hps.model.use_spk_conditioned_encoder,
-                use_noise_scaled_mas=hps.model.use_noise_scaled_mas,
-                use_mel_posterior_encoder=hps.model.use_mel_posterior_encoder,
-                use_duration_discriminator=hps.model.use_duration_discriminator,
-                use_wavlm_discriminator=hps.model.use_wavlm_discriminator,
-                inter_channels=hps.model.inter_channels,
-                hidden_channels=hps.model.hidden_channels,
-                filter_channels=hps.model.filter_channels,
-                n_heads=hps.model.n_heads,
-                n_layers=hps.model.n_layers,
-                kernel_size=hps.model.kernel_size,
-                p_dropout=hps.model.p_dropout,
-                resblock=hps.model.resblock,
-                resblock_kernel_sizes=hps.model.resblock_kernel_sizes,
-                resblock_dilation_sizes=hps.model.resblock_dilation_sizes,
-                upsample_rates=hps.model.upsample_rates,
-                upsample_initial_channel=hps.model.upsample_initial_channel,
-                upsample_kernel_sizes=hps.model.upsample_kernel_sizes,
-                n_layers_q=hps.model.n_layers_q,
-                use_spectral_norm=hps.model.use_spectral_norm,
-                gin_channels=hps.model.gin_channels,
-                slm=hps.model.slm,
-            )
-    else:
-        logger.info("Using normal model")
-        # use meta device to speed up instantiation
-        with torch.device("meta"):
-            net_g = SynthesizerTrn(
-                n_vocab=len(SYMBOLS),
-                spec_channels=hps.data.filter_length // 2 + 1,
-                segment_size=hps.train.segment_size // hps.data.hop_length,
-                n_speakers=hps.data.n_speakers,
-                # hps.model 以下のすべての値を引数に渡す
-                use_spk_conditioned_encoder=hps.model.use_spk_conditioned_encoder,
-                use_noise_scaled_mas=hps.model.use_noise_scaled_mas,
-                use_mel_posterior_encoder=hps.model.use_mel_posterior_encoder,
-                use_duration_discriminator=hps.model.use_duration_discriminator,
-                use_wavlm_discriminator=hps.model.use_wavlm_discriminator,
-                inter_channels=hps.model.inter_channels,
-                hidden_channels=hps.model.hidden_channels,
-                filter_channels=hps.model.filter_channels,
-                n_heads=hps.model.n_heads,
-                n_layers=hps.model.n_layers,
-                kernel_size=hps.model.kernel_size,
-                p_dropout=hps.model.p_dropout,
-                resblock=hps.model.resblock,
-                resblock_kernel_sizes=hps.model.resblock_kernel_sizes,
-                resblock_dilation_sizes=hps.model.resblock_dilation_sizes,
-                upsample_rates=hps.model.upsample_rates,
-                upsample_initial_channel=hps.model.upsample_initial_channel,
-                upsample_kernel_sizes=hps.model.upsample_kernel_sizes,
-                n_layers_q=hps.model.n_layers_q,
-                use_spectral_norm=hps.model.use_spectral_norm,
-                gin_channels=hps.model.gin_channels,
-                slm=hps.model.slm,
-            )
+) -> SynthesizerTrn:
+    """
+    モデルをロードして返す。
 
-    # net_g.state_dict() # これは不要そう
-    # _ = net_g.eval() # meta device なので eval() するとエラーになるかも？ロード後にやるべき
+    v3.0.0 以降は JP-Extra モデルのみサポート。
+    pre-3.x モデルとの後方互換性のため、語彙サイズを自動検出する。
+    """
+    if not version.endswith("JP-Extra"):
+        raise ValueError(
+            f"Only JP-Extra models are supported in v3.0+. Got version: {version}"
+        )
+
+    # 語彙サイズ、トーン数、言語数、JP用マッピングを検出
+    symbols, n_tones, n_languages, jp_tone_start, jp_language_id = (
+        _get_model_params_for_version(model_path)
+    )
+    vocab_size = len(symbols)
+
+    logger.info(
+        f"Using JP-Extra model with vocab_size={vocab_size}, n_tones={n_tones}, n_languages={n_languages}"
+    )
+
+    # use meta device to speed up instantiation
+    with torch.device("meta"):
+        net_g = SynthesizerTrn(
+            n_vocab=vocab_size,
+            spec_channels=hps.data.filter_length // 2 + 1,
+            segment_size=hps.train.segment_size // hps.data.hop_length,
+            n_speakers=hps.data.n_speakers,
+            # Tone and language counts (different for v2 vs v3 models)
+            n_tones=n_tones,
+            n_languages=n_languages,
+            # hps.model 以下のすべての値を引数に渡す
+            use_spk_conditioned_encoder=hps.model.use_spk_conditioned_encoder,
+            use_noise_scaled_mas=hps.model.use_noise_scaled_mas,
+            use_mel_posterior_encoder=hps.model.use_mel_posterior_encoder,
+            use_duration_discriminator=hps.model.use_duration_discriminator,
+            use_wavlm_discriminator=hps.model.use_wavlm_discriminator,
+            inter_channels=hps.model.inter_channels,
+            hidden_channels=hps.model.hidden_channels,
+            filter_channels=hps.model.filter_channels,
+            n_heads=hps.model.n_heads,
+            n_layers=hps.model.n_layers,
+            kernel_size=hps.model.kernel_size,
+            p_dropout=hps.model.p_dropout,
+            resblock=hps.model.resblock,
+            resblock_kernel_sizes=hps.model.resblock_kernel_sizes,
+            resblock_dilation_sizes=hps.model.resblock_dilation_sizes,
+            upsample_rates=hps.model.upsample_rates,
+            upsample_initial_channel=hps.model.upsample_initial_channel,
+            upsample_kernel_sizes=hps.model.upsample_kernel_sizes,
+            n_layers_q=hps.model.n_layers_q,
+            use_spectral_norm=hps.model.use_spectral_norm,
+            gin_channels=hps.model.gin_channels,
+            slm=hps.model.slm,
+        )
 
     if model_path.endswith(".pth") or model_path.endswith(".pt"):
         # .pth の場合は assign=True は使えないので、一度 CPU に実体化してからロードして GPU に送る（従来通り）
@@ -128,6 +179,11 @@ def get_net_g(
         "Generator module weight normalization removed for inference optimization"
     )
 
+    # Store symbols and mappings for later use in get_text
+    net_g._symbols = symbols  # type: ignore
+    net_g._jp_tone_start = jp_tone_start  # type: ignore
+    net_g._jp_language_id = jp_language_id  # type: ignore
+
     return net_g
 
 
@@ -141,20 +197,44 @@ def get_text(
     given_phone: Optional[list[str]] = None,
     given_tone: Optional[list[int]] = None,
     dtype: Optional[torch.dtype] = None,
-) -> tuple[
-    torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor
-]:
-    use_jp_extra = hps.version.endswith("JP-Extra")
+    symbols: Optional[list[str]] = None,
+    tone_start: Optional[int] = None,
+    language_id: Optional[int] = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    テキストを音素・トーン・言語 ID・BERT 特徴量に変換する。
+
+    v3.0.0 以降は日本語 (JP) のみサポート。
+
+    Args:
+        symbols: モデルに対応するシンボルリスト (None の場合は v3 デフォルト)
+        tone_start: JP トーンの開始インデックス (None の場合はデフォルト)
+        language_id: JP の言語 ID (None の場合はデフォルト)
+
+    Returns:
+        tuple: (ja_bert, phone, tone, language)
+    """
+    if language_str != Languages.JP:
+        raise ValueError(
+            f"Language {language_str} not supported. Only JP is supported in v3.0+"
+        )
+
     norm_text, phone, tone, word2ph, sep_text, _, _ = clean_text_with_given_phone_tone(
         text,
         language_str,
         given_phone=given_phone,
         given_tone=given_tone,
-        use_jp_extra=use_jp_extra,
         # 推論時のみ呼び出されるので、raise_yomi_error は False に設定
         raise_yomi_error=False,
     )
-    phone, tone, language = cleaned_text_to_sequence(phone, tone, language_str)
+    phone, tone, language = cleaned_text_to_sequence(
+        phone,
+        tone,
+        language_str,
+        symbols=symbols,
+        tone_start=tone_start,
+        language_id=language_id,
+    )
 
     if hps.data.add_blank:
         phone = commons.intersperse(phone, 0)
@@ -163,7 +243,8 @@ def get_text(
         for i in range(len(word2ph)):
             word2ph[i] = word2ph[i] * 2
         word2ph[0] += 1
-    bert_ori = extract_bert_feature(
+
+    ja_bert = extract_bert_feature(
         norm_text,
         word2ph,
         language_str,
@@ -171,34 +252,15 @@ def get_text(
         assist_text,
         assist_text_weight,
         dtype=dtype,
-        sep_text=sep_text,  # clean_text_with_given_phone_tone() の中間生成物を再利用して効率向上を図る
+        sep_text=sep_text,
     )
     del word2ph
-    assert bert_ori.shape[-1] == len(phone), phone
-
-    if language_str == Languages.ZH:
-        bert = bert_ori
-        ja_bert = torch.zeros(1024, len(phone))
-        en_bert = torch.zeros(1024, len(phone))
-    elif language_str == Languages.JP:
-        bert = torch.zeros(1024, len(phone))
-        ja_bert = bert_ori
-        en_bert = torch.zeros(1024, len(phone))
-    elif language_str == Languages.EN:
-        bert = torch.zeros(1024, len(phone))
-        ja_bert = torch.zeros(1024, len(phone))
-        en_bert = bert_ori
-    else:
-        raise ValueError("language_str should be ZH, JP or EN")
-
-    assert bert.shape[-1] == len(phone), (
-        f"Bert seq len {bert.shape[-1]} != {len(phone)}"
-    )
+    assert ja_bert.shape[-1] == len(phone), phone
 
     phone = torch.LongTensor(phone)
     tone = torch.LongTensor(tone)
     language = torch.LongTensor(language)
-    return bert, ja_bert, en_bert, phone, tone, language
+    return ja_bert, phone, tone, language
 
 
 def infer(
@@ -208,10 +270,10 @@ def infer(
     noise_scale: float,
     noise_scale_w: float,
     length_scale: float,
-    sid: int,  # In the original Bert-VITS2, its speaker_name: str, but here it's id
+    sid: int,
     language: Languages,
     hps: HyperParameters,
-    net_g: Union[SynthesizerTrn, SynthesizerTrnJPExtra],
+    net_g: SynthesizerTrn,
     device: str,
     skip_start: bool = False,
     skip_end: bool = False,
@@ -221,8 +283,17 @@ def infer(
     given_tone: Optional[list[int]] = None,
     bert_dtype: Optional[torch.dtype] = None,
 ) -> NDArray[Any]:
-    is_jp_extra = hps.version.endswith("JP-Extra")
-    bert, ja_bert, en_bert, phones, tones, lang_ids = get_text(
+    """
+    テキストから音声を生成する。
+
+    v3.0.0 以降は日本語 (JP) のみサポート。
+    """
+    # Get model-specific symbols and mappings
+    symbols = getattr(net_g, "_symbols", None)
+    tone_start = getattr(net_g, "_jp_tone_start", None)
+    language_id = getattr(net_g, "_jp_language_id", None)
+
+    ja_bert, phones, tones, lang_ids = get_text(
         text,
         language,
         hps,
@@ -232,64 +303,44 @@ def infer(
         given_phone=given_phone,
         given_tone=given_tone,
         dtype=bert_dtype,
+        symbols=symbols,
+        tone_start=tone_start,
+        language_id=language_id,
     )
     if skip_start:
         phones = phones[3:]
         tones = tones[3:]
         lang_ids = lang_ids[3:]
-        bert = bert[:, 3:]
         ja_bert = ja_bert[:, 3:]
-        en_bert = en_bert[:, 3:]
     if skip_end:
         phones = phones[:-2]
         tones = tones[:-2]
         lang_ids = lang_ids[:-2]
-        bert = bert[:, :-2]
         ja_bert = ja_bert[:, :-2]
-        en_bert = en_bert[:, :-2]
 
     with torch.no_grad():
         x_tst = phones.to(device).unsqueeze(0)
         tones = tones.to(device).unsqueeze(0)
         lang_ids = lang_ids.to(device).unsqueeze(0)
-        bert = bert.to(device).unsqueeze(0)
         ja_bert = ja_bert.to(device).unsqueeze(0)
-        en_bert = en_bert.to(device).unsqueeze(0)
         x_tst_lengths = torch.LongTensor([phones.size(0)]).to(device)
         style_vec_tensor = torch.from_numpy(style_vec).to(device).unsqueeze(0)
         del phones
         sid_tensor = torch.LongTensor([sid]).to(device)
 
-        if is_jp_extra:
-            output = cast(SynthesizerTrnJPExtra, net_g).infer(
-                x_tst,
-                x_tst_lengths,
-                sid_tensor,
-                tones,
-                lang_ids,
-                ja_bert,
-                style_vec=style_vec_tensor,
-                length_scale=length_scale,
-                sdp_ratio=sdp_ratio,
-                noise_scale=noise_scale,
-                noise_scale_w=noise_scale_w,
-            )
-        else:
-            output = cast(SynthesizerTrn, net_g).infer(
-                x_tst,
-                x_tst_lengths,
-                sid_tensor,
-                tones,
-                lang_ids,
-                bert,
-                ja_bert,
-                en_bert,
-                style_vec=style_vec_tensor,
-                length_scale=length_scale,
-                sdp_ratio=sdp_ratio,
-                noise_scale=noise_scale,
-                noise_scale_w=noise_scale_w,
-            )
+        output = net_g.infer(
+            x_tst,
+            x_tst_lengths,
+            sid_tensor,
+            tones,
+            lang_ids,
+            ja_bert,
+            style_vec=style_vec_tensor,
+            length_scale=length_scale,
+            sdp_ratio=sdp_ratio,
+            noise_scale=noise_scale,
+            noise_scale_w=noise_scale_w,
+        )
 
         audio = output[0][0, 0].data.cpu().float().numpy()
 
@@ -297,13 +348,11 @@ def infer(
             x_tst,
             tones,
             lang_ids,
-            bert,
             x_tst_lengths,
             sid_tensor,
             ja_bert,
-            en_bert,
-            style_vec,
-        )  # , emo
+            style_vec_tensor,
+        )
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -320,7 +369,7 @@ def infer_stream(
     sid: int,
     language: Languages,
     hps: HyperParameters,
-    net_g: Union[SynthesizerTrn, SynthesizerTrnJPExtra],
+    net_g: SynthesizerTrn,
     device: str,
     skip_start: bool = False,
     skip_end: bool = False,
@@ -336,6 +385,8 @@ def infer_stream(
     ストリーミング推論を実行する関数。
     Generator 部分のみストリーミング処理を行い、音声チャンクを逐次 yield する。
 
+    v3.0.0 以降は日本語 (JP) のみサポート。
+
     Args:
         text: 読み上げるテキスト
         style_vec: スタイルベクトル
@@ -344,7 +395,7 @@ def infer_stream(
         noise_scale_w: ノイズスケール W
         length_scale: 長さスケール
         sid: 話者 ID
-        language: 言語
+        language: 言語 (JP のみ)
         hps: ハイパーパラメータ
         net_g: 音声合成モデル
         device: デバイス
@@ -373,8 +424,12 @@ def infer_stream(
         "overlap_size must be even for proper margin calculation"
     )
 
-    is_jp_extra = hps.version.endswith("JP-Extra")
-    bert, ja_bert, en_bert, phones, tones, lang_ids = get_text(
+    # Get model-specific symbols and mappings
+    symbols = getattr(net_g, "_symbols", None)
+    tone_start = getattr(net_g, "_jp_tone_start", None)
+    language_id = getattr(net_g, "_jp_language_id", None)
+
+    ja_bert, phones, tones, lang_ids = get_text(
         text,
         language,
         hps,
@@ -384,69 +439,45 @@ def infer_stream(
         given_phone=given_phone,
         given_tone=given_tone,
         dtype=bert_dtype,
+        symbols=symbols,
+        tone_start=tone_start,
+        language_id=language_id,
     )
     if skip_start:
         phones = phones[3:]
         tones = tones[3:]
         lang_ids = lang_ids[3:]
-        bert = bert[:, 3:]
         ja_bert = ja_bert[:, 3:]
-        en_bert = en_bert[:, 3:]
     if skip_end:
         phones = phones[:-2]
         tones = tones[:-2]
         lang_ids = lang_ids[:-2]
-        bert = bert[:, :-2]
         ja_bert = ja_bert[:, :-2]
-        en_bert = en_bert[:, :-2]
 
     with torch.no_grad():
         x_tst = phones.to(device).unsqueeze(0)
         tones = tones.to(device).unsqueeze(0)
         lang_ids = lang_ids.to(device).unsqueeze(0)
-        bert = bert.to(device).unsqueeze(0)
         ja_bert = ja_bert.to(device).unsqueeze(0)
-        en_bert = en_bert.to(device).unsqueeze(0)
         x_tst_lengths = torch.LongTensor([phones.size(0)]).to(device)
         style_vec_tensor = torch.from_numpy(style_vec).to(device).unsqueeze(0)
         del phones
         sid_tensor = torch.LongTensor([sid]).to(device)
 
         # Generator への入力特徴量を生成
-        if is_jp_extra:
-            z, y_mask, g, attn, z_p, m_p, logs_p = cast(
-                SynthesizerTrnJPExtra, net_g
-            ).infer_input_feature(
-                x_tst,
-                x_tst_lengths,
-                sid_tensor,
-                tones,
-                lang_ids,
-                ja_bert,
-                style_vec=style_vec_tensor,
-                length_scale=length_scale,
-                sdp_ratio=sdp_ratio,
-                noise_scale=noise_scale,
-                noise_scale_w=noise_scale_w,
-            )
-        else:
-            z, y_mask, g, attn, z_p, m_p, logs_p = cast(
-                SynthesizerTrn, net_g
-            ).infer_input_feature(
-                x_tst,
-                x_tst_lengths,
-                sid_tensor,
-                tones,
-                lang_ids,
-                bert,
-                ja_bert,
-                en_bert,
-                style_vec=style_vec_tensor,
-                length_scale=length_scale,
-                sdp_ratio=sdp_ratio,
-                noise_scale=noise_scale,
-                noise_scale_w=noise_scale_w,
-            )
+        z, y_mask, g, attn, z_p, m_p, logs_p = net_g.infer_input_feature(
+            x_tst,
+            x_tst_lengths,
+            sid_tensor,
+            tones,
+            lang_ids,
+            ja_bert,
+            style_vec=style_vec_tensor,
+            length_scale=length_scale,
+            sdp_ratio=sdp_ratio,
+            noise_scale=noise_scale,
+            noise_scale_w=noise_scale_w,
+        )
 
         # Generator 部分のストリーミング処理
         z_input = z * y_mask
@@ -492,11 +523,9 @@ def infer_stream(
             x_tst,
             tones,
             lang_ids,
-            bert,
             x_tst_lengths,
             sid_tensor,
             ja_bert,
-            en_bert,
             style_vec_tensor,
             z,
             y_mask,

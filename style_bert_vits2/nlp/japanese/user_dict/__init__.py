@@ -158,7 +158,9 @@ def update_dict(
             dict_paths.append(str(dic_file))
 
         if dict_paths:
-            logger.info(f"Loading {len(dict_paths)} dictionary files from {DEFAULT_USER_DICT_DIR}")
+            logger.info(
+                f"Loading {len(dict_paths)} dictionary files from {DEFAULT_USER_DICT_DIR}"
+            )
             pyopenjtalk.update_global_jtalk_with_user_dict(dict_paths)
 
     except Exception as e:

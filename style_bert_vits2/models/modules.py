@@ -625,14 +625,18 @@ class ConvFlow(nn.Module):
             print(f"[DEBUG] NaN found in h after convs")
             print(f"  h dtype: {h.dtype}")
             print(f"  h_before_convs dtype: {h_before_convs.dtype}")
-            print(f"  h_before_convs min: {h_before_convs.min()}, max: {h_before_convs.max()}")
+            print(
+                f"  h_before_convs min: {h_before_convs.min()}, max: {h_before_convs.max()}"
+            )
             print(f"  h_before_convs has inf: {torch.isinf(h_before_convs).any()}")
             print(f"  g dtype: {g.dtype if g is not None else 'None'}")
             print(f"  x_mask dtype: {x_mask.dtype}")
             # Check how many NaN values
             nan_count = torch.isnan(h).sum().item()
             total_elements = h.numel()
-            print(f"  NaN count: {nan_count}/{total_elements} ({100*nan_count/total_elements:.2f}%)")
+            print(
+                f"  NaN count: {nan_count}/{total_elements} ({100 * nan_count / total_elements:.2f}%)"
+            )
 
         h_after_proj = self.proj(h)
         # Debug: Check for NaN after projection

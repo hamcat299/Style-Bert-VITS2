@@ -188,8 +188,10 @@ def rational_quadratic_spline(
 
         discriminant = b.pow(2) - 4 * a * c
         # assert (discriminant >= 0).all(), f"Discriminant is negative, {discriminant}"
-        if (torch.any(discriminant < 0)):
-            print("Negative discriminant encountered in rational quadratic spline inverse, clamping to zero.")
+        if torch.any(discriminant < 0):
+            print(
+                "Negative discriminant encountered in rational quadratic spline inverse, clamping to zero."
+            )
             # Clamp discriminant to avoid NaNs from sqrt
             discriminant = torch.clamp(discriminant, min=0.0)
 

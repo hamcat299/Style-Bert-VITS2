@@ -40,7 +40,9 @@ from style_bert_vits2.utils import torch_device_to_onnx_providers
 
 
 config = get_config()
-ln = config.server_config.language
+# v3.0.0以降は日本語 (JP) のみサポート
+# 設定ファイルの言語設定は無視され、常にJPが使用される
+ln = Languages.JP
 
 
 # pyopenjtalk_worker を起動
@@ -176,7 +178,9 @@ if __name__ == "__main__":
             DEFAULT_LENGTH,
             description="話速。基準は1で大きくするほど音声は長くなり読み上げが遅まる",
         ),
-        language: Languages = Query(ln, description="textの言語"),
+        language: Languages = Query(
+            ln, description="textの言語 (v3.0.0以降はJPのみサポート)"
+        ),
         auto_split: bool = Query(DEFAULT_LINE_SPLIT, description="改行で分けて生成"),
         split_interval: float = Query(
             DEFAULT_SPLIT_INTERVAL, description="分けた場合に挟む無音の長さ（秒）"
@@ -301,7 +305,9 @@ if __name__ == "__main__":
             DEFAULT_LENGTH,
             description="話速。基準は1で大きくするほど音声は長くなり読み上げが遅まる",
         ),
-        language: Languages = Query(ln, description="textの言語"),
+        language: Languages = Query(
+            ln, description="textの言語 (v3.0.0以降はJPのみサポート)"
+        ),
         auto_split: bool = Query(DEFAULT_LINE_SPLIT, description="改行で分けて生成"),
         split_interval: float = Query(
             DEFAULT_SPLIT_INTERVAL, description="分けた場合に挟む無音の長さ（秒）"
@@ -463,7 +469,6 @@ if __name__ == "__main__":
         """廃止。実行環境のステータスを取得するものだった。"""
         # 廃止予定なので中身は空
         return {}
-
 
     @app.get("/tools/get_audio", response_class=AudioResponse)
     def get_audio(

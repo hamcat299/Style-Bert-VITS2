@@ -13,7 +13,6 @@ from style_bert_vits2.nlp.symbols import PUNCTUATIONS
 
 def g2p(
     norm_text: str,
-    use_jp_extra: bool = True,
     raise_yomi_error: bool = False,
     jtalk: Any = None,
 ) -> tuple[list[str], list[int], list[int], list[str], list[str], list[str]]:
@@ -30,7 +29,6 @@ def g2p(
 
     Args:
         norm_text (str): 正規化済みテキスト
-        use_jp_extra (bool, optional): False の場合、「ん」の音素を「N」ではなく「n」とする。Defaults to True.
         raise_yomi_error (bool, optional): False の場合、読めない文字が「'」として発音される。Defaults to False.
         jtalk (Any, optional): 未指定時は pyopenjtalk モジュール内部で保持されているインスタンスが自動的に利用される。
 
@@ -107,10 +105,6 @@ def g2p(
 
     assert len(phones) == sum(word2ph), f"{len(phones)} != {sum(word2ph)}"
 
-    # use_jp_extra でない場合は「N」を「n」に変換
-    if not use_jp_extra:
-        phones = [phone if phone != "N" else "n" for phone in phones]
-
     return phones, tones, word2ph, sep_text, sep_kata, sep_kata_with_joshi
 
 
@@ -143,7 +137,9 @@ def text_to_sep_kata(
         njd_features = pyopenjtalk.run_frontend(norm_text, jtalk=jtalk)
     sep_text: list[str] = []
     sep_kata: list[str] = []
-    sep_kata_with_joshi: list[str] = []  # 助詞を分けずに連結した sep_kata (例: "鉛筆", "を" -> "鉛筆を")
+    sep_kata_with_joshi: list[
+        str
+    ] = []  # 助詞を分けずに連結した sep_kata (例: "鉛筆", "を" -> "鉛筆を")
 
     for parts in njd_features:
         # word: 実際の単語の文字列

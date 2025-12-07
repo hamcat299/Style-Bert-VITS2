@@ -31,9 +31,6 @@ from style_bert_vits2.voice import adjust_voice
 
 if TYPE_CHECKING:
     from style_bert_vits2.models.models import SynthesizerTrn
-    from style_bert_vits2.models.models_jp_extra import (
-        SynthesizerTrn as SynthesizerTrnJPExtra,
-    )
 
 
 class NullModelParam(BaseModel):
@@ -129,7 +126,8 @@ class TTSModel:
         self.style_vector_inference: Optional[Any] = None
 
         # net_g / null_model_params は PyTorch 推論時のみ遅延初期化される
-        self.net_g: Union[SynthesizerTrn, SynthesizerTrnJPExtra, None] = None
+        # v3.0.0 以降は SynthesizerTrn のみサポート
+        self.net_g: Optional[SynthesizerTrn] = None
         self.null_model_params: Optional[dict[int, NullModelParam]] = None
 
         # onnx_session は ONNX 推論時のみ遅延初期化される
@@ -411,9 +409,10 @@ class TTSModel:
         """
 
         logger.info(f"Start generating audio data from text:\n{text}")
-        if language != "JP" and self.hyper_parameters.version.endswith("JP-Extra"):
+        # v3.0.0 以降は日本語 (JP) のみサポート
+        if language != Languages.JP:
             raise ValueError(
-                "The model is trained with JP-Extra, but the language is not JP"
+                f"Language {language} not supported. Only JP is supported in v3.0+"
             )
         if reference_audio_path == "":
             reference_audio_path = None
@@ -629,9 +628,10 @@ class TTSModel:
         """
 
         logger.info(f"Start streaming audio generation from text:\n{text}")
-        if language != "JP" and self.hyper_parameters.version.endswith("JP-Extra"):
+        # v3.0.0 以降は日本語 (JP) のみサポート
+        if language != Languages.JP:
             raise ValueError(
-                "The model is trained with JP-Extra, but the language is not JP"
+                f"Language {language} not supported. Only JP is supported in v3.0+"
             )
         if reference_audio_path == "":
             reference_audio_path = None
@@ -691,7 +691,9 @@ class TTSModel:
                     yield (sampling_rate, self.convert_to_16_bit_wav(audio_chunk))
                 # 行間の無音を挿入
                 if i != len(texts) - 1:
-                    silence = np.zeros(int(sampling_rate * split_interval), dtype=np.int16)
+                    silence = np.zeros(
+                        int(sampling_rate * split_interval), dtype=np.int16
+                    )
                     yield (sampling_rate, silence)
         else:
             # 単一テキストをストリーミング生成
@@ -897,17 +899,11 @@ class TTSModelHolder:
         # Trigger loading of the main model
         self.current_model.load()
 
-        # Trigger loading of BERT models
-        # Note: We load for all supported languages or specific ones if we knew them.
-        # Here we load JP, EN, ZH as they are standard.
+        # Trigger loading of BERT models (JP only in v3.0+)
         # This avoids the delay during the first inference.
         if not self.current_model.is_onnx_model:
             bert_models.load_model(Languages.JP)
             bert_models.load_tokenizer(Languages.JP)
-            # bert_models.load_model(Languages.EN) # Optional: uncomment if needed upfront
-            # bert_models.load_tokenizer(Languages.EN)
-            # bert_models.load_model(Languages.ZH)
-            # bert_models.load_tokenizer(Languages.ZH)
 
         speakers = list(self.current_model.spk2id.keys())
         styles = list(self.current_model.style2id.keys())

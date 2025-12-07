@@ -44,19 +44,9 @@ if __name__ == "__main__":
         help="Trim silence",
     )
     parser.add_argument(
-        "--freeze_EN_bert",
-        action="store_true",
-        help="Freeze English BERT",
-    )
-    parser.add_argument(
         "--freeze_JP_bert",
         action="store_true",
         help="Freeze Japanese BERT",
-    )
-    parser.add_argument(
-        "--freeze_ZH_bert",
-        action="store_true",
-        help="Freeze Chinese BERT",
     )
     parser.add_argument(
         "--freeze_style",
@@ -67,11 +57,6 @@ if __name__ == "__main__":
         "--freeze_decoder",
         action="store_true",
         help="Freeze decoder",
-    )
-    parser.add_argument(
-        "--use_jp_extra",
-        action="store_true",
-        help="Use JP-Extra model",
     )
     parser.add_argument(
         "--val_per_lang",
@@ -102,12 +87,9 @@ if __name__ == "__main__":
         num_processes=args.num_processes,
         normalize=args.normalize,
         trim=args.trim,
-        freeze_EN_bert=args.freeze_EN_bert,
         freeze_JP_bert=args.freeze_JP_bert,
-        freeze_ZH_bert=args.freeze_ZH_bert,
         freeze_style=args.freeze_style,
         freeze_decoder=args.freeze_decoder,
-        use_jp_extra=args.use_jp_extra,
         val_per_lang=args.val_per_lang,
         log_interval=args.log_interval,
         yomi_error=args.yomi_error,

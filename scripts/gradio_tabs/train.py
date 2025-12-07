@@ -50,12 +50,9 @@ def initialize(
     batch_size: int,
     epochs: int,
     save_every_steps: int,
-    freeze_EN_bert: bool,
     freeze_JP_bert: bool,
-    freeze_ZH_bert: bool,
     freeze_style: bool,
     freeze_decoder: bool,
-    use_jp_extra: bool,
     log_interval: int,
 ):
     global logger_handler
@@ -69,12 +66,11 @@ def initialize(
     logger_handler = logger.add(paths.dataset_path / file_name)
 
     logger.info(
-        f"Step 1: start initialization...\nmodel_name: {model_name}, batch_size: {batch_size}, epochs: {epochs}, save_every_steps: {save_every_steps}, freeze_ZH_bert: {freeze_ZH_bert}, freeze_JP_bert: {freeze_JP_bert}, freeze_EN_bert: {freeze_EN_bert}, freeze_style: {freeze_style}, freeze_decoder: {freeze_decoder}, use_jp_extra: {use_jp_extra}"
+        f"Step 1: start initialization...\nmodel_name: {model_name}, batch_size: {batch_size}, epochs: {epochs}, save_every_steps: {save_every_steps}, freeze_JP_bert: {freeze_JP_bert}, freeze_style: {freeze_style}, freeze_decoder: {freeze_decoder}"
     )
 
-    default_config_path = (
-        "configs/config.json" if not use_jp_extra else "configs/config_jp_extra.json"
-    )
+    # v3.0+: Only JP-Extra config is supported
+    default_config_path = "configs/config.json"
 
     with open(default_config_path, encoding="utf-8") as f:
         config = json.load(f)
@@ -86,16 +82,14 @@ def initialize(
     config["train"]["eval_interval"] = save_every_steps
     config["train"]["log_interval"] = log_interval
 
-    config["train"]["freeze_EN_bert"] = freeze_EN_bert
+    # v3.0+: Only JP-Extra, no EN/ZH bert options
     config["train"]["freeze_JP_bert"] = freeze_JP_bert
-    config["train"]["freeze_ZH_bert"] = freeze_ZH_bert
     config["train"]["freeze_style"] = freeze_style
     config["train"]["freeze_decoder"] = freeze_decoder
 
     config["train"]["bf16_run"] = False  # デフォルトでFalseのはずだが念のため
 
-    # 今はデフォルトであるが、以前は非JP-Extra版になくバグの原因になるので念のため
-    config["data"]["use_jp_extra"] = use_jp_extra
+    # v3.0+: Always JP-Extra
 
     model_path = paths.dataset_path / "models"
     if model_path.exists():
@@ -108,7 +102,8 @@ def initialize(
             dirs_exist_ok=True,
         )
         shutil.rmtree(model_path)
-    pretrained_dir = Path("pretrained" if not use_jp_extra else "pretrained_jp_extra")
+    # v3.0+: Only JP-Extra pretrained models
+    pretrained_dir = Path("pretrained_v3")
     try:
         shutil.copytree(
             src=pretrained_dir,
@@ -163,9 +158,7 @@ def resample(model_name: str, normalize: bool, trim: bool, num_processes: int):
     return True, "Step 2, Success: 音声ファイルの前処理が完了しました"
 
 
-def preprocess_text(
-    model_name: str, use_jp_extra: bool, val_per_lang: int, yomi_error: str
-):
+def preprocess_text(model_name: str, val_per_lang: int, yomi_error: str):
     logger.info("Step 3: start preprocessing text...")
     paths = get_path(model_name)
     if not paths.esd_path.exists():
@@ -191,8 +184,6 @@ def preprocess_text(
         yomi_error,
         "--correct_path",  # 音声ファイルのパスを正しいパスに修正する
     ]
-    if use_jp_extra:
-        cmd.append("--use_jp_extra")
     success, message = run_script_with_log(cmd)
     if not success:
         logger.error("Step 3: preprocessing text failed.")
@@ -265,12 +256,9 @@ def preprocess_all(
     num_processes: int,
     normalize: bool,
     trim: bool,
-    freeze_EN_bert: bool,
     freeze_JP_bert: bool,
-    freeze_ZH_bert: bool,
     freeze_style: bool,
     freeze_decoder: bool,
-    use_jp_extra: bool,
     val_per_lang: int,
     log_interval: int,
     yomi_error: str,
@@ -282,12 +270,9 @@ def preprocess_all(
         batch_size=batch_size,
         epochs=epochs,
         save_every_steps=save_every_steps,
-        freeze_EN_bert=freeze_EN_bert,
         freeze_JP_bert=freeze_JP_bert,
-        freeze_ZH_bert=freeze_ZH_bert,
         freeze_style=freeze_style,
         freeze_decoder=freeze_decoder,
-        use_jp_extra=use_jp_extra,
         log_interval=log_interval,
     )
     if not success:
@@ -303,7 +288,6 @@ def preprocess_all(
 
     success, message = preprocess_text(
         model_name=model_name,
-        use_jp_extra=use_jp_extra,
         val_per_lang=val_per_lang,
         yomi_error=yomi_error,
     )
@@ -327,7 +311,6 @@ def preprocess_all(
 def train(
     model_name: str,
     skip_style: bool = False,
-    use_jp_extra: bool = True,
     speedup: bool = False,
     not_use_custom_batch_sampler: bool = False,
 ):
@@ -340,7 +323,8 @@ def train(
     with open("config.yml", "w", encoding="utf-8") as f:
         yaml.dump(yml_data, f, allow_unicode=True)
 
-    train_py = "scripts/train.py" if not use_jp_extra else "scripts/train_jp_extra.py"
+    # v3.0+: Only JP-Extra model is supported, always use train.py
+    train_py = "scripts/train.py"
     cmd = [
         train_py,
         "--config",
@@ -425,10 +409,10 @@ how_to_md = """
 
 - 途中から学習を再開する場合は、モデル名を入力してから「学習を開始する」を押せばよいです。
 
-## JP-Extra版について
+## v3.0について
 
-元とするモデル構造として [Bert-VITS2 Japanese-Extra](https://github.com/fishaudio/Bert-VITS2/releases/tag/JP-Exta) を使うことができます。
-日本語のアクセントやイントネーションや自然性が上がる傾向にありますが、英語と中国語は話せなくなります。
+v3.0以降は日本語専用（JP-Extra）モデルのみをサポートしています。
+[Bert-VITS2 Japanese-Extra](https://github.com/fishaudio/Bert-VITS2/releases/tag/JP-Exta) をベースにしており、日本語のアクセントやイントネーションや自然性が向上しています。
 """
 
 prepare_md = """
@@ -462,11 +446,12 @@ prepare_md = """
 
 
 ```
-path/to/audio.wav(wavファイル以外でもこう書く)|{話者名}|{言語ID、ZHかJPかEN}|{書き起こしテキスト}
+path/to/audio.wav(wavファイル以外でもこう書く)|{話者名}|JP|{書き起こしテキスト}
 ```
 
 - ここで、最初の`path/to/audio.wav`は、`raw/`からの相対パスです。つまり、`raw/foo.wav`の場合は`foo.wav`、`raw/style1/bar.wav`の場合は`style1/bar.wav`となります。
 - 拡張子がwavでない場合でも、`esd.list`には`wav`と書いてください、つまり、`raw/bar.mp3`の場合でも`bar.wav`と書いてください。
+- v3.0以降は日本語（JP）のみサポートしています。
 
 
 例：
@@ -476,10 +461,7 @@ bar.wav|taro|JP|はい、聞こえています……。何か用ですか？
 style1/baz.wav|hanako|JP|今日はいい天気ですね。
 style1/qux.wav|taro|JP|はい、そうですね。
 ...
-english_teacher.wav|Mary|EN|How are you? I'm fine, thank you, and you?
-...
 ```
-もちろん日本語話者の単一話者データセットでも構いません。
 """
 
 
@@ -494,10 +476,6 @@ def create_train_app():
         gr.Markdown("### 自動前処理")
         with gr.Row(variant="panel"):
             with gr.Column():
-                use_jp_extra = gr.Checkbox(
-                    label="JP-Extra版を使う（日本語の性能が上がるが英語と中国語は話せなくなる）",
-                    value=True,
-                )
                 batch_size = gr.Slider(
                     label="バッチサイズ",
                     info="学習速度が遅い場合は小さくして試し、VRAMに余裕があれば大きくしてください。JP-Extra版でのVRAM使用量目安: 1: 6GB, 2: 8GB, 3: 10GB, 4: 12GB",
@@ -565,16 +543,8 @@ def create_train_app():
                         step=10,
                     )
                     gr.Markdown("学習時に特定の部分を凍結させるかどうか")
-                    freeze_EN_bert = gr.Checkbox(
-                        label="英語bert部分を凍結",
-                        value=False,
-                    )
                     freeze_JP_bert = gr.Checkbox(
                         label="日本語bert部分を凍結",
-                        value=False,
-                    )
-                    freeze_ZH_bert = gr.Checkbox(
-                        label="中国語bert部分を凍結",
                         value=False,
                     )
                     freeze_style = gr.Checkbox(
@@ -595,10 +565,6 @@ def create_train_app():
             with gr.Row(variant="panel"):
                 with gr.Column():
                     gr.Markdown(value="#### Step 1: 設定ファイルの生成")
-                    use_jp_extra_manual = gr.Checkbox(
-                        label="JP-Extra版を使う",
-                        value=True,
-                    )
                     batch_size_manual = gr.Slider(
                         label="バッチサイズ",
                         value=2,
@@ -627,16 +593,8 @@ def create_train_app():
                         maximum=1000,
                         step=10,
                     )
-                    freeze_EN_bert_manual = gr.Checkbox(
-                        label="英語bert部分を凍結",
-                        value=False,
-                    )
                     freeze_JP_bert_manual = gr.Checkbox(
                         label="日本語bert部分を凍結",
-                        value=False,
-                    )
-                    freeze_ZH_bert_manual = gr.Checkbox(
-                        label="中国語bert部分を凍結",
                         value=False,
                     )
                     freeze_style_manual = gr.Checkbox(
@@ -719,10 +677,6 @@ def create_train_app():
                 info="学習再開の場合の場合はチェックしてください",
                 value=False,
             )
-            use_jp_extra_train = gr.Checkbox(
-                label="JP-Extra版を使う",
-                value=True,
-            )
             not_use_custom_batch_sampler = gr.Checkbox(
                 label="カスタムバッチサンプラーを無効化",
                 info="VRAMに余裕がある場合にチェックすると、長い音声ファイルも学習に使われるようになります",
@@ -750,12 +704,9 @@ def create_train_app():
                 num_processes,
                 normalize,
                 trim,
-                freeze_EN_bert,
                 freeze_JP_bert,
-                freeze_ZH_bert,
                 freeze_style,
                 freeze_decoder,
-                use_jp_extra,
                 val_per_lang,
                 log_interval,
                 yomi_error,
@@ -771,12 +722,9 @@ def create_train_app():
                 batch_size_manual,
                 epochs_manual,
                 save_every_steps_manual,
-                freeze_EN_bert_manual,
                 freeze_JP_bert_manual,
-                freeze_ZH_bert_manual,
                 freeze_style_manual,
                 freeze_decoder_manual,
-                use_jp_extra_manual,
                 log_interval_manual,
             ],
             outputs=[info_init],
@@ -795,7 +743,6 @@ def create_train_app():
             second_elem_of(preprocess_text),
             inputs=[
                 model_name,
-                use_jp_extra_manual,
                 val_per_lang_manual,
                 yomi_error_manual,
             ],
@@ -818,7 +765,6 @@ def create_train_app():
             inputs=[
                 model_name,
                 skip_style,
-                use_jp_extra_train,
                 speedup,
                 not_use_custom_batch_sampler,
             ],
@@ -826,17 +772,6 @@ def create_train_app():
         )
         tensorboard_btn.click(
             run_tensorboard, inputs=[model_name], outputs=[tensorboard_btn]
-        )
-
-        use_jp_extra.change(
-            lambda x: gr.Checkbox(value=x),
-            inputs=[use_jp_extra],
-            outputs=[use_jp_extra_train],
-        )
-        use_jp_extra_manual.change(
-            lambda x: gr.Checkbox(value=x),
-            inputs=[use_jp_extra_manual],
-            outputs=[use_jp_extra_train],
         )
 
     return app

@@ -110,8 +110,8 @@ if !errorlevel! neq 0 ( pause & popd & exit /b !errorlevel! )
 echo --------------------------------------------------
 echo Installing dependencies...
 echo --------------------------------------------------
-echo Executing: uv sync --extra torch-cpu
-uv sync --extra torch-cpu
+echo Executing: uv sync --extra cpu
+uv sync --extra cpu
 if !errorlevel! neq 0 ( pause & popd & exit /b !errorlevel! )
 
 echo ----------------------------------------

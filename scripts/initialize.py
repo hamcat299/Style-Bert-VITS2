@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 from huggingface_hub import hf_hub_download
 
-from style_bert_vits2.constants import Languages
+from style_bert_vits2.constants import DEFAULT_SLM_MODEL, Languages
 from style_bert_vits2.logging import logger
 from style_bert_vits2.nlp import bert_models
 
@@ -16,36 +16,37 @@ def download_bert_models():
 
 
 def download_slm_model():
-    local_path = Path("slm/wavlm-base-plus/")
-    file = "pytorch_model.bin"
-    if not Path(local_path).joinpath(file).exists():
-        logger.info(f"Downloading wavlm-base-plus {file}")
-        hf_hub_download("microsoft/wavlm-base-plus", file, local_dir=local_path)
+    """
+    Download WavLM model for training by loading it (triggers HF cache download).
+    The model is immediately deleted after loading to free memory.
+    """
+    from transformers import AutoModel
+
+    logger.info(f"Downloading WavLM model from {DEFAULT_SLM_MODEL}")
+    model = AutoModel.from_pretrained(DEFAULT_SLM_MODEL)
+    del model
+    logger.info("WavLM model downloaded successfully")
 
 
-def download_pretrained_models():
-    files = ["G_0.safetensors", "D_0.safetensors", "DUR_0.safetensors"]
-    local_path = Path("pretrained")
-    for file in files:
-        if not Path(local_path).joinpath(file).exists():
-            logger.info(f"Downloading pretrained {file}")
-            hf_hub_download(
-                "litagin/Style-Bert-VITS2-1.0-base", file, local_dir=local_path
-            )
-
-
-def download_jp_extra_pretrained_models():
+def download_pretrained_models_v3():
+    """
+    Download v3 pretrained models directly from HuggingFace.
+    """
     files = ["G_0.safetensors", "D_0.safetensors", "WD_0.safetensors"]
-    local_path = Path("pretrained_jp_extra")
+    local_path = Path("pretrained_v3")
+
     for file in files:
-        if not Path(local_path).joinpath(file).exists():
-            logger.info(f"Downloading JP-Extra pretrained {file}")
+        if not local_path.joinpath(file).exists():
+            logger.info(f"Downloading v3 pretrained {file}")
             hf_hub_download(
-                "litagin/Style-Bert-VITS2-2.0-base-JP-Extra", file, local_dir=local_path
+                "litagin/Style-Bert-VITS2-3.0-base", file, local_dir=local_path
             )
 
 
 def download_default_models():
+    """
+    Download default v3 models from HuggingFace.
+    """
     files = [
         "jvnv-F1-jp/config.json",
         "jvnv-F1-jp/jvnv-F1-jp_e160_s14000.safetensors",
@@ -64,17 +65,17 @@ def download_default_models():
         if not Path(f"model_assets/{file}").exists():
             logger.info(f"Downloading {file}")
             hf_hub_download(
-                "litagin/style_bert_vits2_jvnv",
+                "litagin/style_bert_vits2_jvnv_v3",
                 file,
                 local_dir="model_assets",
             )
     additional_files = {
-        "litagin/sbv2_koharune_ami": [
+        "litagin/sbv2_koharune_ami_v3": [
             "koharune-ami/config.json",
             "koharune-ami/style_vectors.npy",
             "koharune-ami/koharune-ami.safetensors",
         ],
-        "litagin/sbv2_amitaro": [
+        "litagin/sbv2_amitaro_v3": [
             "amitaro/config.json",
             "amitaro/style_vectors.npy",
             "amitaro/amitaro.safetensors",
@@ -115,8 +116,7 @@ def main():
         download_default_models()
     if not args.only_infer:
         download_slm_model()
-        download_pretrained_models()
-        download_jp_extra_pretrained_models()
+        download_pretrained_models_v3()
 
     # If configs/paths.yml not exists, create it
     default_paths_yml = Path("configs/default_paths.yml")
