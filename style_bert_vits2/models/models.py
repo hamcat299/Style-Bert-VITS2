@@ -1045,7 +1045,106 @@ class SynthesizerTrn(nn.Module):
             (x, logw, logw_),
         )
 
+    def infer_input_feature(
+        self,
+        x: torch.Tensor,
+        x_lengths: torch.Tensor,
+        sid: torch.Tensor,
+        tone: torch.Tensor,
+        language: torch.Tensor,
+        bert: torch.Tensor,
+        ja_bert: torch.Tensor,
+        en_bert: torch.Tensor,
+        style_vec: torch.Tensor,
+        noise_scale: float = 0.667,
+        length_scale: float = 1.0,
+        noise_scale_w: float = 0.8,
+        sdp_ratio: float = 0.0,
+        y: Optional[torch.Tensor] = None,
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        """
+        Generator への入力特徴量（潜在変数）を生成する。
+        通常推論・ストリーミング推論の両方で共通の前処理。
+
+        Returns:
+            tuple: z (latent), y_mask, g (global conditioning), attn, z_p, m_p, logs_p
+        """
+        if self.n_speakers > 0:
+            g = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
+        else:
+            assert y is not None
+            g = self.ref_enc(y.transpose(1, 2)).unsqueeze(-1)
+
+        x, m_p, logs_p, x_mask = self.enc_p(
+            x, x_lengths, tone, language, bert, ja_bert, en_bert, style_vec, sid, g=g
+        )
+
+        # SDP/DP run in original dtype
+        logw = self.sdp(x, x_mask, g=g, reverse=True, noise_scale=noise_scale_w) * (
+            sdp_ratio
+        ) + self.dp(x, x_mask, g=g) * (1 - sdp_ratio)
+
+        # Force FP32 for exp/log operations which are unstable in FP16/BF16
+        original_dtype = x.dtype
+        logw_fp32 = logw.float()
+        x_mask_fp32 = x_mask.float()
+        m_p_fp32 = m_p.float()
+        logs_p_fp32 = logs_p.float()
+
+        w = torch.exp(logw_fp32) * x_mask_fp32 * length_scale
+        w_ceil = torch.ceil(w)
+        y_lengths = torch.clamp_min(torch.sum(w_ceil, [1, 2]), 1).long()
+        y_mask = torch.unsqueeze(commons.sequence_mask(y_lengths, None), 1).to(
+            torch.float32
+        )
+        attn_mask = torch.unsqueeze(x_mask_fp32, 2) * torch.unsqueeze(y_mask, -1)
+        attn = commons.generate_path(w_ceil, attn_mask)
+
+        m_p_fp32 = torch.matmul(attn.squeeze(1), m_p_fp32.transpose(1, 2)).transpose(
+            1, 2
+        )  # [b, t', t], [b, t, d] -> [b, d, t']
+        logs_p_fp32 = torch.matmul(attn.squeeze(1), logs_p_fp32.transpose(1, 2)).transpose(
+            1, 2
+        )  # [b, t', t], [b, t, d] -> [b, d, t']
+
+        z_p = m_p_fp32 + torch.randn_like(m_p_fp32) * torch.exp(logs_p_fp32) * noise_scale
+
+        # Flow (back to original dtype)
+        z = self.flow(z_p.to(original_dtype), y_mask.to(original_dtype), g=g, reverse=True)
+
+        return z, y_mask, g, attn, z_p, m_p_fp32, logs_p_fp32
+
     def infer(
+        self,
+        x: torch.Tensor,
+        x_lengths: torch.Tensor,
+        sid: torch.Tensor,
+        tone: torch.Tensor,
+        language: torch.Tensor,
+        bert: torch.Tensor,
+        ja_bert: torch.Tensor,
+        en_bert: torch.Tensor,
+        style_vec: torch.Tensor,
+        noise_scale: float = 0.667,
+        length_scale: float = 1.0,
+        noise_scale_w: float = 0.8,
+        max_len: Optional[int] = None,
+        sdp_ratio: float = 0.0,
+        y: Optional[torch.Tensor] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, tuple[torch.Tensor, ...]]:
+        return self._infer_impl(x, x_lengths, sid, tone, language, bert, ja_bert, en_bert, style_vec,
+                               noise_scale, length_scale, noise_scale_w, max_len,
+                               sdp_ratio, y)
+
+    def _infer_impl(
         self,
         x: torch.Tensor,
         x_lengths: torch.Tensor,
@@ -1073,26 +1172,44 @@ class SynthesizerTrn(nn.Module):
         x, m_p, logs_p, x_mask = self.enc_p(
             x, x_lengths, tone, language, bert, ja_bert, en_bert, style_vec, sid, g=g
         )
+
+        # SDP/DP run in original dtype
         logw = self.sdp(x, x_mask, g=g, reverse=True, noise_scale=noise_scale_w) * (
             sdp_ratio
         ) + self.dp(x, x_mask, g=g) * (1 - sdp_ratio)
-        w = torch.exp(logw) * x_mask * length_scale
+
+        # Force FP32 for exp/log operations which are unstable in FP16/BF16
+        original_dtype = x.dtype
+        logw_fp32 = logw.float()
+        x_mask_fp32 = x_mask.float()
+        m_p_fp32 = m_p.float()
+        logs_p_fp32 = logs_p.float()
+
+        w = torch.exp(logw_fp32) * x_mask_fp32 * length_scale
         w_ceil = torch.ceil(w)
         y_lengths = torch.clamp_min(torch.sum(w_ceil, [1, 2]), 1).long()
         y_mask = torch.unsqueeze(commons.sequence_mask(y_lengths, None), 1).to(
-            x_mask.dtype
+            torch.float32
         )
-        attn_mask = torch.unsqueeze(x_mask, 2) * torch.unsqueeze(y_mask, -1)
+        attn_mask = torch.unsqueeze(x_mask_fp32, 2) * torch.unsqueeze(y_mask, -1)
         attn = commons.generate_path(w_ceil, attn_mask)
 
-        m_p = torch.matmul(attn.squeeze(1), m_p.transpose(1, 2)).transpose(
+        m_p_fp32 = torch.matmul(attn.squeeze(1), m_p_fp32.transpose(1, 2)).transpose(
             1, 2
         )  # [b, t', t], [b, t, d] -> [b, d, t']
-        logs_p = torch.matmul(attn.squeeze(1), logs_p.transpose(1, 2)).transpose(
+        logs_p_fp32 = torch.matmul(attn.squeeze(1), logs_p_fp32.transpose(1, 2)).transpose(
             1, 2
         )  # [b, t', t], [b, t, d] -> [b, d, t']
 
-        z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * noise_scale
-        z = self.flow(z_p, y_mask, g=g, reverse=True)
-        o = self.dec((z * y_mask)[:, :, :max_len], g=g)
+        z_p = m_p_fp32 + torch.randn_like(m_p_fp32) * torch.exp(logs_p_fp32) * noise_scale
+        # End of FP32 section
+
+        z = self.flow(z_p.to(original_dtype), y_mask.to(original_dtype), g=g, reverse=True)
+
+        # Decoder runs in the model's dtype (set during model loading)
+        dec_dtype = next(self.dec.parameters()).dtype
+        z_dec = (z * y_mask)[:, :, :max_len].to(dec_dtype)
+        g_dec = g.to(dec_dtype)
+        o = self.dec(z_dec, g=g_dec)
+
         return o, attn, y_mask, (z, z_p, m_p, logs_p)

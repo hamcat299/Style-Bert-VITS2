@@ -7,7 +7,6 @@ from typing import Any
 import librosa
 import pyloudnorm as pyln
 import soundfile
-from config import get_config
 from numpy.typing import NDArray
 from tqdm import tqdm
 
@@ -71,26 +70,25 @@ def resample(
 
 
 if __name__ == "__main__":
-    config = get_config()
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--sr",
         type=int,
-        default=config.resample_config.sampling_rate,
+        default=44100,
         help="sampling rate",
     )
     parser.add_argument(
         "--input_dir",
         "-i",
         type=str,
-        default=config.resample_config.in_dir,
+        required=True,
         help="path to source dir",
     )
     parser.add_argument(
         "--output_dir",
         "-o",
         type=str,
-        default=config.resample_config.out_dir,
+        required=True,
         help="path to target dir",
     )
     parser.add_argument(

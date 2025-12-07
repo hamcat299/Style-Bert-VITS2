@@ -26,15 +26,7 @@ update_dict()
 
 def process_line(x: tuple[str, bool]):
     line, add_blank = x
-    device = config.bert_gen_config.device
-    if config.bert_gen_config.use_multi_device:
-        rank = mp.current_process()._identity
-        rank = rank[0] if len(rank) > 0 else 0
-        if torch.cuda.is_available():
-            gpu_id = rank % torch.cuda.device_count()
-            device = f"cuda:{gpu_id}"
-        else:
-            device = "cpu"
+    device = config.device
     wav_path, _, language_str, text, phones, tone, word2ph = line.strip().split("|")
     phone = phones.split(" ")
     tone = [int(i) for i in tone.split(" ")]
@@ -63,13 +55,9 @@ def process_line(x: tuple[str, bool]):
         torch.save(bert, bert_path)
 
 
-preprocess_text_config = config.preprocess_text_config
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-c", "--config", type=str, default=config.bert_gen_config.config_path
-    )
+    parser.add_argument("-c", "--config", type=str, required=True)
     args, _ = parser.parse_known_args()
     config_path = args.config
     hps = HyperParameters.load_from_json(config_path)

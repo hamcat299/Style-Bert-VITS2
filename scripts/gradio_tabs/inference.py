@@ -200,6 +200,14 @@ def make_non_interactive():
     return gr.update(interactive=False, value="音声合成（モデルをロードしてください）")
 
 
+def make_both_non_interactive():
+    """Disable both TTS and streaming buttons."""
+    return (
+        gr.update(interactive=False, value="音声合成（モデルをロードしてください）"),
+        gr.update(interactive=False, value="ストリーミング合成（モデルをロードしてください）"),
+    )
+
+
 def gr_util(item):
     if item == "プリセットから選ぶ":
         return (gr.update(visible=True), gr.Audio(visible=False, value=None))
@@ -261,10 +269,30 @@ def create_inference_app(model_holder: TTSModelHolder) -> gr.Blocks:
         intonation_scale,
         null_models: dict[int, NullModelParam],
         force_reload_model: bool,
+        dtype_str: str,
     ):
+        # Update dtype settings before loading model
+        import torch
+        dtype_map = {
+            "FP32": None,
+            "FP16": torch.float16,
+            "BF16": torch.bfloat16,
+        }
+        new_dtype = dtype_map[dtype_str]
+
+        # If dtype settings changed, force model reload by unloading and clearing current model
+        if model_holder.model_dtype != new_dtype:
+            if model_holder.current_model is not None:
+                logger.info(f"Dtype settings changed from {model_holder.model_dtype} to {new_dtype}, unloading current model")
+                model_holder.current_model.unload()
+            model_holder.current_model = None
+
+        model_holder.model_dtype = new_dtype
+
         model_holder.get_model(model_name, model_path)
         assert model_holder.current_model is not None
         logger.debug(f"Null models setting: {null_models}")
+        logger.debug(f"Dtype: {dtype_str}")
 
         wrong_tone_message = ""
         kata_tone: Optional[list[tuple[str, int]]] = None
@@ -344,6 +372,112 @@ def create_inference_app(model_holder: TTSModelHolder) -> gr.Blocks:
             message = wrong_tone_message + "\n" + message
         return message, (sr, audio), kata_tone_json_str, False
 
+    def tts_stream_fn(
+        model_name,
+        model_path,
+        text,
+        language,
+        reference_audio_path,
+        sdp_ratio,
+        noise_scale,
+        noise_scale_w,
+        length_scale,
+        line_split,
+        split_interval,
+        assist_text,
+        assist_text_weight,
+        use_assist_text,
+        style,
+        style_weight,
+        speaker,
+        dtype_str: str,
+        chunk_size: int,
+        overlap_size: int,
+    ):
+        """Streaming TTS callback function.
+
+        Accumulates audio chunks until we have at least 1 second of audio
+        before yielding to Gradio. This is required because Gradio's streaming
+        audio player has issues with chunks smaller than 1 second.
+        See: https://www.gradio.app/guides/streaming-ai-generated-audio
+        """
+        import numpy as np
+        import torch
+
+        # Minimum chunk duration in seconds for smooth Gradio playback
+        MIN_CHUNK_DURATION = 1.0
+
+        dtype_map = {
+            "FP32": None,
+            "FP16": torch.float16,
+            "BF16": torch.bfloat16,
+        }
+        new_dtype = dtype_map[dtype_str]
+
+        # If dtype settings changed, force model reload
+        if model_holder.model_dtype != new_dtype:
+            if model_holder.current_model is not None:
+                logger.info(f"Dtype settings changed from {model_holder.model_dtype} to {new_dtype}, unloading current model")
+                model_holder.current_model.unload()
+            model_holder.current_model = None
+
+        model_holder.model_dtype = new_dtype
+        model_holder.get_model(model_name, model_path)
+
+        if model_holder.current_model is None:
+            yield None
+            return
+
+        speaker_id = model_holder.current_model.spk2id[speaker]
+
+        try:
+            # Buffer for accumulating audio chunks
+            audio_buffer: list[np.ndarray] = []
+            buffer_samples = 0
+            sample_rate = None
+
+            for sr, audio_chunk in model_holder.current_model.infer_stream(
+                text=text,
+                language=language,
+                reference_audio_path=reference_audio_path,
+                sdp_ratio=sdp_ratio,
+                noise=noise_scale,
+                noise_w=noise_scale_w,
+                length=length_scale,
+                line_split=line_split,
+                split_interval=split_interval,
+                assist_text=assist_text,
+                assist_text_weight=assist_text_weight,
+                use_assist_text=use_assist_text,
+                style=style,
+                style_weight=style_weight,
+                speaker_id=speaker_id,
+                chunk_size=int(chunk_size),
+                overlap_size=int(overlap_size),
+            ):
+                sample_rate = sr
+                audio_buffer.append(audio_chunk)
+                buffer_samples += len(audio_chunk)
+
+                # Check if we have enough audio to yield (>= MIN_CHUNK_DURATION)
+                buffer_duration = buffer_samples / sr
+                if buffer_duration >= MIN_CHUNK_DURATION:
+                    # Concatenate buffered chunks and yield
+                    accumulated_audio = np.concatenate(audio_buffer)
+                    yield (sr, accumulated_audio)
+                    # Reset buffer
+                    audio_buffer = []
+                    buffer_samples = 0
+
+            # Yield any remaining audio in the buffer
+            if audio_buffer and sample_rate is not None:
+                accumulated_audio = np.concatenate(audio_buffer)
+                yield (sample_rate, accumulated_audio)
+
+        except ValueError as e:
+            logger.error(f"Streaming error: {e}")
+            yield None
+
     def get_model_files(model_name: str):
         return [str(f) for f in model_holder.model_files_dict[model_name]]
 
@@ -383,6 +517,12 @@ def create_inference_app(model_holder: TTSModelHolder) -> gr.Blocks:
                         )
                     refresh_button = gr.Button("更新", scale=1, visible=True)
                     load_button = gr.Button("ロード", scale=1, variant="primary")
+                dtype_dropdown = gr.Dropdown(
+                    label="モデル精度",
+                    choices=["FP32", "FP16", "BF16"],
+                    value="FP32",
+                    info="FP16/BF16は高速・省メモリだがCPUでは使えません",
+                )
                 text_input = gr.TextArea(label="テキスト", value=initial_text)
                 pitch_scale = gr.Slider(
                     minimum=0.8,
@@ -478,6 +618,23 @@ def create_inference_app(model_holder: TTSModelHolder) -> gr.Blocks:
                         inputs=[use_assist_text],
                         outputs=[assist_text, assist_text_weight],
                     )
+                with gr.Accordion(label="ストリーミング設定", open=False):
+                    stream_chunk_size = gr.Slider(
+                        minimum=20,
+                        maximum=200,
+                        value=100,
+                        step=10,
+                        label="Chunk Size (frames)",
+                        info="Larger = fewer chunks, less overhead, but longer time to first audio",
+                    )
+                    stream_overlap_size = gr.Slider(
+                        minimum=0,
+                        maximum=50,
+                        value=16,
+                        step=2,
+                        label="Overlap Size (frames)",
+                        info="Overlap between chunks for smooth transitions",
+                    )
                 with gr.Accordion(label="ヌルモデル", open=False):
                     with gr.Row():
                         null_models_count = gr.Number(
@@ -551,7 +708,7 @@ def create_inference_app(model_holder: TTSModelHolder) -> gr.Blocks:
                                         outputs=[null_model_path],
                                     )
                                     null_model_path.change(
-                                        make_non_interactive, outputs=[tts_button]
+                                        make_both_non_interactive, outputs=[tts_button, stream_button]
                                     )
                                     # 愚直すぎるのでもう少しなんとかしたい
                                     null_model_path.change(
@@ -666,8 +823,18 @@ def create_inference_app(model_holder: TTSModelHolder) -> gr.Blocks:
                     variant="primary",
                     interactive=False,
                 )
+                stream_button = gr.Button(
+                    "ストリーミング合成（モデルをロードしてください）",
+                    variant="secondary",
+                    interactive=False,
+                )
                 text_output = gr.Textbox(label="情報")
                 audio_output = gr.Audio(label="結果")
+                stream_audio_output = gr.Audio(
+                    label="ストリーミング結果",
+                    streaming=True,
+                    autoplay=True,
+                )
                 with gr.Accordion("テキスト例", open=False):
                     gr.Examples(examples, inputs=[text_input, language])
 
@@ -697,8 +864,36 @@ def create_inference_app(model_holder: TTSModelHolder) -> gr.Blocks:
                 intonation_scale,
                 null_models,
                 force_reload_model,
+                dtype_dropdown,
             ],
             outputs=[text_output, audio_output, tone, force_reload_model],
+        )
+
+        stream_button.click(
+            tts_stream_fn,
+            inputs=[
+                model_name,
+                model_path,
+                text_input,
+                language,
+                ref_audio_path,
+                sdp_ratio,
+                noise_scale,
+                noise_scale_w,
+                length_scale,
+                line_split,
+                split_interval,
+                assist_text,
+                assist_text_weight,
+                use_assist_text,
+                style,
+                style_weight,
+                speaker,
+                dtype_dropdown,
+                stream_chunk_size,
+                stream_overlap_size,
+            ],
+            outputs=[stream_audio_output],
         )
 
         model_name.change(
@@ -707,17 +902,31 @@ def create_inference_app(model_holder: TTSModelHolder) -> gr.Blocks:
             outputs=[model_path],
         )
 
-        model_path.change(make_non_interactive, outputs=[tts_button])
+        model_path.change(make_both_non_interactive, outputs=[tts_button, stream_button])
+
+        # Force model reload when dtype settings change
+        dtype_dropdown.change(
+            lambda: True,
+            outputs=[force_reload_model],
+        )
 
         refresh_button.click(
             model_holder.update_model_names_for_gradio,
             outputs=[model_name, model_path, tts_button],
         )
 
+        def load_model_with_stream_button(model_name, model_path):
+            """Wrapper to add stream button enablement."""
+            style_dropdown, tts_btn, speaker_dropdown = model_holder.get_model_for_gradio(
+                model_name, model_path
+            )
+            stream_btn = gr.Button(interactive=True, value="ストリーミング合成")
+            return style_dropdown, tts_btn, speaker_dropdown, stream_btn
+
         load_button.click(
-            model_holder.get_model_for_gradio,
+            load_model_with_stream_button,
             inputs=[model_name, model_path],
-            outputs=[style, tts_button, speaker],
+            outputs=[style, tts_button, speaker, stream_button],
         )
 
         style_mode.change(

@@ -53,7 +53,7 @@ def run():
         "-c",
         "--config",
         type=str,
-        default=config.train_ms_config.config_path,
+        required=True,
         help="JSON file for configuration",
     )
     parser.add_argument(
@@ -97,16 +97,21 @@ def run():
     args = parser.parse_args()
 
     # Set log file
-    model_dir = os.path.join(args.model, config.train_ms_config.model_dir)
+    model_dir = os.path.join(args.model, "models")
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     logger.add(os.path.join(args.model, f"train_{timestamp}.log"))
 
-    # Environment variables
-    envs = config.train_ms_config.env
-    for env_name, env_value in envs.items():
+    # Environment variables for PyTorch distributed training compatibility
+    default_envs = {
+        "MASTER_ADDR": "localhost",
+        "MASTER_PORT": "10086",
+        "WORLD_SIZE": "1",
+        "LOCAL_RANK": "0",
+        "RANK": "0",
+    }
+    for env_name, env_value in default_envs.items():
         if env_name not in os.environ.keys():
-            logger.info(f"Loading configuration from config {env_value!s}")
-            os.environ[env_name] = str(env_value)
+            os.environ[env_name] = env_value
 
     # Single GPU/CPU setup
     if torch.cuda.is_available():
@@ -120,16 +125,6 @@ def run():
     hps.model_dir = model_dir
     hps.speedup = args.speedup
     hps.repo_id = args.repo_id
-
-    # Check config consistency
-    if os.path.realpath(args.config) != os.path.realpath(
-        config.train_ms_config.config_path
-    ):
-        with open(args.config, encoding="utf-8") as f:
-            data = f.read()
-        os.makedirs(os.path.dirname(config.train_ms_config.config_path), exist_ok=True)
-        with open(config.train_ms_config.config_path, "w", encoding="utf-8") as f:
-            f.write(data)
 
     if args.repo_id is not None:
         try:
@@ -745,7 +740,7 @@ def train_and_evaluate(
                     os.path.join(hps.model_dir, f"DUR_{global_step}.pth"),
                 )
 
-            keep_ckpts = config.train_ms_config.keep_ckpts
+            keep_ckpts = config.train_config.keep_ckpts
             if keep_ckpts > 0:
                 utils.checkpoints.clean_checkpoints(
                     model_dir_path=hps.model_dir,

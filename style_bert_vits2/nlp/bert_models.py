@@ -14,6 +14,7 @@ import gc
 import time
 from typing import TYPE_CHECKING, Optional, Union, cast
 
+import torch
 from transformers import (
     AutoModelForMaskedLM,
     AutoTokenizer,
@@ -40,6 +41,9 @@ __loaded_tokenizers: dict[
     Languages,
     Union[PreTrainedTokenizer, PreTrainedTokenizerFast, DebertaV2TokenizerFast],
 ] = {}
+
+# 各言語ごとの BERT モデルの現在の dtype を格納する辞書
+__model_dtypes: dict[Languages, Optional["torch.dtype"]] = {}
 
 
 def load_model(
@@ -100,6 +104,9 @@ def load_model(
     logger.info(
         f"Loaded the {language.name} BERT model from {pretrained_model_name_or_path} ({time.time() - start_time:.2f}s)"
     )
+
+    # 初期ロード時の dtype を記録 (デフォルトは FP32)
+    __model_dtypes[language] = torch.float32
 
     return __loaded_models[language]
 
@@ -163,7 +170,7 @@ def load_tokenizer(
     return __loaded_tokenizers[language]
 
 
-def transfer_model(language: Languages, device: str) -> None:
+def transfer_model(language: Languages, device: str, dtype: Optional[torch.dtype] = None) -> None:
     """
     指定された言語の BERT モデルを、指定されたデバイスに移動する。
     モデルのロード後に推論デバイスを変更したい場合に利用する。
@@ -172,8 +179,8 @@ def transfer_model(language: Languages, device: str) -> None:
     Args:
         language (Languages): モデルを移動する言語
         device (str): モデルを移動するデバイス
+        dtype (Optional[torch.dtype]): モデルの dtype (torch.float16, torch.bfloat16 など). None の場合は変換しない
     """
-
     if language not in __loaded_models:
         raise ValueError(f"BERT model for {language.name} is not loaded.")
 
@@ -181,13 +188,30 @@ def transfer_model(language: Languages, device: str) -> None:
     # ex: current_device="cuda:0", device="cuda" → 何もしない
     # ex: current_device="cuda:0", device="cpu" → モデルを CPU に移動
     current_device = str(__loaded_models[language].device)
+    current_dtype = __model_dtypes.get(language, torch.float32)
+
+    # dtype が None の場合は FP32 に変換 (デフォルト)
+    target_dtype = dtype if dtype is not None else torch.float32
+
     if current_device.startswith(device):
+        # Device is already correct, but check if we need to convert dtype
+        if device != "cpu" and current_dtype != target_dtype:
+            __loaded_models[language].to(dtype=target_dtype)  # type: ignore
+            __model_dtypes[language] = target_dtype
+            logger.info(f"Converted the {language.name} BERT model to {target_dtype}")
         return
 
     __loaded_models[language].to(device)  # type: ignore
-    logger.info(
-        f"Transferred the {language.name} BERT model from {current_device} to {device}"
-    )
+    if device != "cpu":
+        __loaded_models[language].to(dtype=target_dtype)  # type: ignore
+        __model_dtypes[language] = target_dtype
+        logger.info(
+            f"Transferred the {language.name} BERT model from {current_device} to {device} and converted to {target_dtype}"
+        )
+    else:
+        logger.info(
+            f"Transferred the {language.name} BERT model from {current_device} to {device}"
+        )
 
 
 def is_model_loaded(language: Languages) -> bool:
@@ -213,9 +237,6 @@ def unload_model(language: Languages) -> None:
     Args:
         language (Languages): アンロードする BERT モデルの言語
     """
-
-    import torch
-
     if language in __loaded_models:
         del __loaded_models[language]
         if torch.cuda.is_available():

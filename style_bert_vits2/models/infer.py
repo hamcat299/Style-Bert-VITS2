@@ -1,5 +1,7 @@
+from collections.abc import Iterator
 from typing import Any, Optional, Union, cast
 
+import numpy as np
 import torch
 from numpy.typing import NDArray
 
@@ -20,7 +22,11 @@ from style_bert_vits2.nlp.symbols import SYMBOLS
 
 
 def get_net_g(
-    model_path: str, version: str, device: str, hps: HyperParameters
+    model_path: str,
+    version: str,
+    device: str,
+    hps: HyperParameters,
+    model_dtype: Optional[torch.dtype] = None,
 ) -> Union[SynthesizerTrn, SynthesizerTrnJPExtra]:
     if version.endswith("JP-Extra"):
         logger.info("Using JP-Extra model")
@@ -108,6 +114,20 @@ def get_net_g(
         raise ValueError(f"Unknown model format: {model_path}")
 
     _ = net_g.eval()
+
+    # Dtype conversion
+    if model_dtype is not None:
+        net_g.to(dtype=model_dtype)
+        logger.info(f"Entire model converted to {model_dtype}")
+
+    # Generator (Decoder) の推論最適化: weight_norm を取り除く
+    # 学習完了後の推論時には weight_norm は不要なオーバーヘッドとなるため除去しておく
+    # 精度に影響はなく、単に計算効率が向上する
+    net_g.dec.remove_weight_norm()
+    logger.info(
+        "Generator module weight normalization removed for inference optimization"
+    )
+
     return net_g
 
 
@@ -120,11 +140,12 @@ def get_text(
     assist_text_weight: float = 0.7,
     given_phone: Optional[list[str]] = None,
     given_tone: Optional[list[int]] = None,
+    dtype: Optional[torch.dtype] = None,
 ) -> tuple[
     torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor
 ]:
     use_jp_extra = hps.version.endswith("JP-Extra")
-    norm_text, phone, tone, word2ph = clean_text_with_given_phone_tone(
+    norm_text, phone, tone, word2ph, sep_text, _, _ = clean_text_with_given_phone_tone(
         text,
         language_str,
         given_phone=given_phone,
@@ -149,6 +170,8 @@ def get_text(
         device,
         assist_text,
         assist_text_weight,
+        dtype=dtype,
+        sep_text=sep_text,  # clean_text_with_given_phone_tone() の中間生成物を再利用して効率向上を図る
     )
     del word2ph
     assert bert_ori.shape[-1] == len(phone), phone
@@ -196,6 +219,7 @@ def infer(
     assist_text_weight: float = 0.7,
     given_phone: Optional[list[str]] = None,
     given_tone: Optional[list[int]] = None,
+    bert_dtype: Optional[torch.dtype] = None,
 ) -> NDArray[Any]:
     is_jp_extra = hps.version.endswith("JP-Extra")
     bert, ja_bert, en_bert, phones, tones, lang_ids = get_text(
@@ -207,6 +231,7 @@ def infer(
         assist_text_weight=assist_text_weight,
         given_phone=given_phone,
         given_tone=given_tone,
+        dtype=bert_dtype,
     )
     if skip_start:
         phones = phones[3:]
@@ -283,3 +308,207 @@ def infer(
             torch.cuda.empty_cache()
 
         return audio
+
+
+def infer_stream(
+    text: str,
+    style_vec: NDArray[Any],
+    sdp_ratio: float,
+    noise_scale: float,
+    noise_scale_w: float,
+    length_scale: float,
+    sid: int,
+    language: Languages,
+    hps: HyperParameters,
+    net_g: Union[SynthesizerTrn, SynthesizerTrnJPExtra],
+    device: str,
+    skip_start: bool = False,
+    skip_end: bool = False,
+    assist_text: Optional[str] = None,
+    assist_text_weight: float = 0.7,
+    given_phone: Optional[list[str]] = None,
+    given_tone: Optional[list[int]] = None,
+    bert_dtype: Optional[torch.dtype] = None,
+    chunk_size: int = 100,
+    overlap_size: int = 16,
+) -> Iterator[NDArray[np.float32]]:
+    """
+    ストリーミング推論を実行する関数。
+    Generator 部分のみストリーミング処理を行い、音声チャンクを逐次 yield する。
+
+    Args:
+        text: 読み上げるテキスト
+        style_vec: スタイルベクトル
+        sdp_ratio: SDP と DP の混合比
+        noise_scale: ノイズスケール
+        noise_scale_w: ノイズスケール W
+        length_scale: 長さスケール
+        sid: 話者 ID
+        language: 言語
+        hps: ハイパーパラメータ
+        net_g: 音声合成モデル
+        device: デバイス
+        skip_start: 先頭をスキップするか
+        skip_end: 末尾をスキップするか
+        assist_text: 補助テキスト
+        assist_text_weight: 補助テキストの重み
+        given_phone: 指定された音素列
+        given_tone: 指定されたトーン列
+        bert_dtype: BERT の dtype
+        chunk_size: チャンクサイズ (フレーム数)
+        overlap_size: オーバーラップサイズ (フレーム数)
+
+    Yields:
+        NDArray[np.float32]: 音声チャンク
+
+    Reference: https://qiita.com/__dAi00/items/970f0fe66286510537dd
+    """
+    assert chunk_size > overlap_size, (
+        f"chunk_size ({chunk_size}) must be larger than overlap_size ({overlap_size})"
+    )
+    assert chunk_size > 0 and overlap_size > 0, (
+        "chunk_size and overlap_size must be positive"
+    )
+    assert overlap_size % 2 == 0, (
+        "overlap_size must be even for proper margin calculation"
+    )
+
+    is_jp_extra = hps.version.endswith("JP-Extra")
+    bert, ja_bert, en_bert, phones, tones, lang_ids = get_text(
+        text,
+        language,
+        hps,
+        device,
+        assist_text=assist_text,
+        assist_text_weight=assist_text_weight,
+        given_phone=given_phone,
+        given_tone=given_tone,
+        dtype=bert_dtype,
+    )
+    if skip_start:
+        phones = phones[3:]
+        tones = tones[3:]
+        lang_ids = lang_ids[3:]
+        bert = bert[:, 3:]
+        ja_bert = ja_bert[:, 3:]
+        en_bert = en_bert[:, 3:]
+    if skip_end:
+        phones = phones[:-2]
+        tones = tones[:-2]
+        lang_ids = lang_ids[:-2]
+        bert = bert[:, :-2]
+        ja_bert = ja_bert[:, :-2]
+        en_bert = en_bert[:, :-2]
+
+    with torch.no_grad():
+        x_tst = phones.to(device).unsqueeze(0)
+        tones = tones.to(device).unsqueeze(0)
+        lang_ids = lang_ids.to(device).unsqueeze(0)
+        bert = bert.to(device).unsqueeze(0)
+        ja_bert = ja_bert.to(device).unsqueeze(0)
+        en_bert = en_bert.to(device).unsqueeze(0)
+        x_tst_lengths = torch.LongTensor([phones.size(0)]).to(device)
+        style_vec_tensor = torch.from_numpy(style_vec).to(device).unsqueeze(0)
+        del phones
+        sid_tensor = torch.LongTensor([sid]).to(device)
+
+        # Generator への入力特徴量を生成
+        if is_jp_extra:
+            z, y_mask, g, attn, z_p, m_p, logs_p = cast(
+                SynthesizerTrnJPExtra, net_g
+            ).infer_input_feature(
+                x_tst,
+                x_tst_lengths,
+                sid_tensor,
+                tones,
+                lang_ids,
+                ja_bert,
+                style_vec=style_vec_tensor,
+                length_scale=length_scale,
+                sdp_ratio=sdp_ratio,
+                noise_scale=noise_scale,
+                noise_scale_w=noise_scale_w,
+            )
+        else:
+            z, y_mask, g, attn, z_p, m_p, logs_p = cast(
+                SynthesizerTrn, net_g
+            ).infer_input_feature(
+                x_tst,
+                x_tst_lengths,
+                sid_tensor,
+                tones,
+                lang_ids,
+                bert,
+                ja_bert,
+                en_bert,
+                style_vec=style_vec_tensor,
+                length_scale=length_scale,
+                sdp_ratio=sdp_ratio,
+                noise_scale=noise_scale,
+                noise_scale_w=noise_scale_w,
+            )
+
+        # Generator 部分のストリーミング処理
+        z_input = z * y_mask
+        total_length = z_input.shape[2]
+
+        # 全体のアップサンプリング率を計算
+        total_upsample_factor = int(np.prod(hps.model.upsample_rates))
+        margin_frames = overlap_size // 2
+
+        # Decoder の dtype を取得し、g を事前に変換 (ループ外で1回だけ)
+        dec_dtype = next(net_g.dec.parameters()).dtype
+        g_dec = g.to(dec_dtype)
+        z_input_dec = z_input.to(dec_dtype)
+
+        for start_idx in range(0, total_length, chunk_size - overlap_size):
+            end_idx = min(start_idx + chunk_size, total_length)
+            chunk = z_input_dec[:, :, start_idx:end_idx]
+
+            # Decoder を実行 (dtype変換は不要、事前に変換済み)
+            chunk_output = net_g.dec(chunk, g=g_dec)
+
+            # オーバーラップ処理
+            current_output_length = chunk_output.shape[2]
+
+            trim_left = 0
+            if start_idx != 0:
+                trim_left = margin_frames * total_upsample_factor
+
+            trim_right = 0
+            if end_idx != total_length:
+                trim_right = margin_frames * total_upsample_factor
+
+            start_slice = trim_left
+            end_slice = current_output_length - trim_right
+
+            if start_slice < end_slice:
+                valid_audio = chunk_output[:, :, start_slice:end_slice]
+                audio_chunk = valid_audio[0, 0].data.cpu().float().numpy()
+                if audio_chunk.size > 0:
+                    yield audio_chunk
+
+        del (
+            x_tst,
+            tones,
+            lang_ids,
+            bert,
+            x_tst_lengths,
+            sid_tensor,
+            ja_bert,
+            en_bert,
+            style_vec_tensor,
+            z,
+            y_mask,
+            g,
+            g_dec,
+            z_input,
+            z_input_dec,
+            attn,
+            z_p,
+            m_p,
+            logs_p,
+        )
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()

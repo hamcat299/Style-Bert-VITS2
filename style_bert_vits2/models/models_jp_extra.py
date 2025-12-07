@@ -216,13 +216,47 @@ class StochasticDurationPredictor(nn.Module):
         reverse: bool = False,
         noise_scale: float = 1.0,
     ) -> torch.Tensor:
+        # Debug: Check input x
+        if torch.isnan(x).any():
+            print(f"[DEBUG StochasticDurationPredictor] NaN in input x")
+        if g is not None and torch.isnan(g).any():
+            print(f"[DEBUG StochasticDurationPredictor] NaN in input g")
+
         x = torch.detach(x)
+        # Debug: After detach
+        if torch.isnan(x).any():
+            print(f"[DEBUG StochasticDurationPredictor] NaN in x after detach")
+
         x = self.pre(x)
+        # Debug: After pre
+        if torch.isnan(x).any():
+            print(f"[DEBUG StochasticDurationPredictor] NaN in x after self.pre")
+
         if g is not None:
             g = torch.detach(g)
-            x = x + self.cond(g)
+            # Debug: g after detach
+            if torch.isnan(g).any():
+                print(f"[DEBUG StochasticDurationPredictor] NaN in g after detach")
+
+            cond_g = self.cond(g)
+            # Debug: After cond
+            if torch.isnan(cond_g).any():
+                print(f"[DEBUG StochasticDurationPredictor] NaN in cond_g (self.cond(g))")
+
+            x = x + cond_g
+            # Debug: After adding conditioning
+            if torch.isnan(x).any():
+                print(f"[DEBUG StochasticDurationPredictor] NaN in x after x + cond_g")
+
         x = self.convs(x, x_mask)
+        # Debug: After convs
+        if torch.isnan(x).any():
+            print(f"[DEBUG StochasticDurationPredictor] NaN in x after self.convs")
+
         x = self.proj(x) * x_mask
+        # Debug: After proj
+        if torch.isnan(x).any():
+            print(f"[DEBUG StochasticDurationPredictor] NaN in x after self.proj")
 
         if not reverse:
             flows = self.flows
@@ -270,8 +304,23 @@ class StochasticDurationPredictor(nn.Module):
                 torch.randn(x.size(0), 2, x.size(2)).to(device=x.device, dtype=x.dtype)
                 * noise_scale
             )
+            # Debug: Check z after creation
+            if torch.isnan(z).any():
+                print(f"[DEBUG StochasticDurationPredictor reverse] NaN in z after randn")
+
             for flow in flows:
+                # Debug: Before flow
+                if torch.isnan(z).any():
+                    print(f"[DEBUG StochasticDurationPredictor reverse] NaN in z before flow {flow.__class__.__name__}")
+                if torch.isnan(x).any():
+                    print(f"[DEBUG StochasticDurationPredictor reverse] NaN in x (used as g) before flow {flow.__class__.__name__}")
+
                 z = flow(z, x_mask, g=x, reverse=reverse)
+
+                # Debug: After flow
+                if torch.isnan(z).any():
+                    print(f"[DEBUG StochasticDurationPredictor reverse] NaN in z after flow {flow.__class__.__name__}")
+
             z0, z1 = torch.split(z, [1, 1], 1)
             logw = z0
             return logw
@@ -413,8 +462,27 @@ class TextEncoder(nn.Module):
         style_vec: torch.Tensor,
         g: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        # Debug: Check inputs
+        if torch.isnan(x).any():
+            print(f"[DEBUG TextEncoder] NaN in input x")
+        if torch.isnan(bert).any():
+            print(f"[DEBUG TextEncoder] NaN in input bert")
+        if torch.isnan(style_vec).any():
+            print(f"[DEBUG TextEncoder] NaN in input style_vec")
+
         bert_emb = self.bert_proj(bert).transpose(1, 2)
-        style_emb = self.style_proj(style_vec.unsqueeze(1))
+        # Debug: After bert projection
+        if torch.isnan(bert_emb).any():
+            print(f"[DEBUG TextEncoder] NaN in bert_emb after projection")
+            print(f"  bert_emb dtype: {bert_emb.dtype}")
+
+        # Convert style_vec to match model dtype (FP32 -> FP16 if use_fp16_all)
+        style_emb = self.style_proj(style_vec.unsqueeze(1).to(self.style_proj.weight.dtype))
+        # Debug: After style projection
+        if torch.isnan(style_emb).any():
+            print(f"[DEBUG TextEncoder] NaN in style_emb after projection")
+            print(f"  style_emb dtype: {style_emb.dtype}")
+
         x = (
             self.emb(x)
             + self.tone_emb(tone)
@@ -422,15 +490,39 @@ class TextEncoder(nn.Module):
             + bert_emb
             + style_emb
         ) * math.sqrt(self.hidden_channels)  # [b, t, h]
+        # Debug: After combining embeddings
+        if torch.isnan(x).any():
+            print(f"[DEBUG TextEncoder] NaN in x after combining embeddings")
+            print(f"  x dtype: {x.dtype}")
+
         x = torch.transpose(x, 1, -1)  # [b, h, t]
+        # Debug: After transpose
+        if torch.isnan(x).any():
+            print(f"[DEBUG TextEncoder] NaN in x after transpose")
+
         x_mask = torch.unsqueeze(commons.sequence_mask(x_lengths, x.size(2)), 1).to(
             x.dtype
         )
 
         x = self.encoder(x * x_mask, x_mask, g=g)
+        # Debug: After encoder
+        if torch.isnan(x).any():
+            print(f"[DEBUG TextEncoder] NaN in x after self.encoder")
+            print(f"  x dtype: {x.dtype}")
+
         stats = self.proj(x) * x_mask
+        # Debug: After proj
+        if torch.isnan(stats).any():
+            print(f"[DEBUG TextEncoder] NaN in stats after self.proj")
+            print(f"  stats dtype: {stats.dtype}")
 
         m, logs = torch.split(stats, self.out_channels, dim=1)
+        # Debug: After split
+        if torch.isnan(m).any():
+            print(f"[DEBUG TextEncoder] NaN in m after split")
+        if torch.isnan(logs).any():
+            print(f"[DEBUG TextEncoder] NaN in logs after split")
+
         return x, m, logs, x_mask
 
 
@@ -1102,7 +1194,102 @@ class SynthesizerTrn(nn.Module):
             g,
         )
 
+    def infer_input_feature(
+        self,
+        x: torch.Tensor,
+        x_lengths: torch.Tensor,
+        sid: torch.Tensor,
+        tone: torch.Tensor,
+        language: torch.Tensor,
+        bert: torch.Tensor,
+        style_vec: torch.Tensor,
+        noise_scale: float = 0.667,
+        length_scale: float = 1.0,
+        noise_scale_w: float = 0.8,
+        sdp_ratio: float = 0.0,
+        y: Optional[torch.Tensor] = None,
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        """
+        Generator への入力特徴量（潜在変数）を生成する。
+        通常推論・ストリーミング推論の両方で共通の前処理。
+
+        Returns:
+            tuple: z (latent), y_mask, g (global conditioning), attn, z_p, m_p, logs_p
+        """
+        if self.n_speakers > 0:
+            g = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
+        else:
+            assert y is not None
+            g = self.ref_enc(y.transpose(1, 2)).unsqueeze(-1)
+
+        x, m_p, logs_p, x_mask = self.enc_p(
+            x, x_lengths, tone, language, bert, style_vec, g=g
+        )
+
+        # SDP/DP run in original dtype
+        logw = self.sdp(x, x_mask, g=g, reverse=True, noise_scale=noise_scale_w) * (
+            sdp_ratio
+        ) + self.dp(x, x_mask, g=g) * (1 - sdp_ratio)
+
+        # Force FP32 for exp/log operations which are unstable in FP16/BF16
+        original_dtype = x.dtype
+        logw_fp32 = logw.float()
+        x_mask_fp32 = x_mask.float()
+        m_p_fp32 = m_p.float()
+        logs_p_fp32 = logs_p.float()
+
+        w = torch.exp(logw_fp32) * x_mask_fp32 * length_scale
+        w_ceil = torch.ceil(w)
+        y_lengths = torch.clamp_min(torch.sum(w_ceil, [1, 2]), 1).long()
+        y_mask = torch.unsqueeze(commons.sequence_mask(y_lengths, None), 1).to(
+            torch.float32
+        )
+        attn_mask = torch.unsqueeze(x_mask_fp32, 2) * torch.unsqueeze(y_mask, -1)
+        attn = commons.generate_path(w_ceil, attn_mask)
+
+        m_p_fp32 = torch.matmul(attn.squeeze(1), m_p_fp32.transpose(1, 2)).transpose(
+            1, 2
+        )  # [b, t', t], [b, t, d] -> [b, d, t']
+        logs_p_fp32 = torch.matmul(attn.squeeze(1), logs_p_fp32.transpose(1, 2)).transpose(
+            1, 2
+        )  # [b, t', t], [b, t, d] -> [b, d, t']
+
+        z_p = m_p_fp32 + torch.randn_like(m_p_fp32) * torch.exp(logs_p_fp32) * noise_scale
+
+        # Flow (back to original dtype)
+        z = self.flow(z_p.to(original_dtype), y_mask.to(original_dtype), g=g, reverse=True)
+
+        return z, y_mask, g, attn, z_p, m_p_fp32, logs_p_fp32
+
     def infer(
+        self,
+        x: torch.Tensor,
+        x_lengths: torch.Tensor,
+        sid: torch.Tensor,
+        tone: torch.Tensor,
+        language: torch.Tensor,
+        bert: torch.Tensor,
+        style_vec: torch.Tensor,
+        noise_scale: float = 0.667,
+        length_scale: float = 1.0,
+        noise_scale_w: float = 0.8,
+        max_len: Optional[int] = None,
+        sdp_ratio: float = 0.0,
+        y: Optional[torch.Tensor] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, tuple[torch.Tensor, ...]]:
+        return self._infer_impl(x, x_lengths, sid, tone, language, bert, style_vec,
+                               noise_scale, length_scale, noise_scale_w, max_len,
+                               sdp_ratio, y)
+
+    def _infer_impl(
         self,
         x: torch.Tensor,
         x_lengths: torch.Tensor,
@@ -1122,32 +1309,69 @@ class SynthesizerTrn(nn.Module):
         # g = self.gst(y)
         if self.n_speakers > 0:
             g = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
+            # Debug: Check g after emb_g
+            if torch.isnan(g).any():
+                print(f"[DEBUG _infer_impl] NaN in g after emb_g")
+                print(f"  g dtype: {g.dtype}, g shape: {g.shape}")
         else:
             assert y is not None
             g = self.ref_enc(y.transpose(1, 2)).unsqueeze(-1)
+            # Debug: Check g after ref_enc
+            if torch.isnan(g).any():
+                print(f"[DEBUG _infer_impl] NaN in g after ref_enc")
+
         x, m_p, logs_p, x_mask = self.enc_p(
             x, x_lengths, tone, language, bert, style_vec, g=g
         )
+
+        # Debug: Check outputs from enc_p
+        if torch.isnan(x).any():
+            print(f"[DEBUG _infer_impl] NaN in x after enc_p")
+            print(f"  x dtype: {x.dtype}, x shape: {x.shape}")
+        if torch.isnan(m_p).any():
+            print(f"[DEBUG _infer_impl] NaN in m_p after enc_p")
+        if torch.isnan(logs_p).any():
+            print(f"[DEBUG _infer_impl] NaN in logs_p after enc_p")
+        if torch.isnan(x_mask).any():
+            print(f"[DEBUG _infer_impl] NaN in x_mask after enc_p")
+
+        # SDP/DP run in original dtype
         logw = self.sdp(x, x_mask, g=g, reverse=True, noise_scale=noise_scale_w) * (
             sdp_ratio
         ) + self.dp(x, x_mask, g=g) * (1 - sdp_ratio)
-        w = torch.exp(logw) * x_mask * length_scale
+
+        # Force FP32 for exp/log operations which are unstable in FP16/BF16
+        original_dtype = x.dtype
+        logw_fp32 = logw.float()
+        x_mask_fp32 = x_mask.float()
+        m_p_fp32 = m_p.float()
+        logs_p_fp32 = logs_p.float()
+
+        w = torch.exp(logw_fp32) * x_mask_fp32 * length_scale
         w_ceil = torch.ceil(w)
         y_lengths = torch.clamp_min(torch.sum(w_ceil, [1, 2]), 1).long()
         y_mask = torch.unsqueeze(commons.sequence_mask(y_lengths, None), 1).to(
-            x_mask.dtype
+            torch.float32
         )
-        attn_mask = torch.unsqueeze(x_mask, 2) * torch.unsqueeze(y_mask, -1)
+        attn_mask = torch.unsqueeze(x_mask_fp32, 2) * torch.unsqueeze(y_mask, -1)
         attn = commons.generate_path(w_ceil, attn_mask)
 
-        m_p = torch.matmul(attn.squeeze(1), m_p.transpose(1, 2)).transpose(
+        m_p_fp32 = torch.matmul(attn.squeeze(1), m_p_fp32.transpose(1, 2)).transpose(
             1, 2
         )  # [b, t', t], [b, t, d] -> [b, d, t']
-        logs_p = torch.matmul(attn.squeeze(1), logs_p.transpose(1, 2)).transpose(
+        logs_p_fp32 = torch.matmul(attn.squeeze(1), logs_p_fp32.transpose(1, 2)).transpose(
             1, 2
         )  # [b, t', t], [b, t, d] -> [b, d, t']
 
-        z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * noise_scale
-        z = self.flow(z_p, y_mask, g=g, reverse=True)
-        o = self.dec((z * y_mask)[:, :, :max_len], g=g)
+        z_p = m_p_fp32 + torch.randn_like(m_p_fp32) * torch.exp(logs_p_fp32) * noise_scale
+        # End of FP32 section
+
+        z = self.flow(z_p.to(original_dtype), y_mask.to(original_dtype), g=g, reverse=True)
+
+        # Decoder runs in the model's dtype (set during model loading)
+        dec_dtype = next(self.dec.parameters()).dtype
+        z_dec = (z * y_mask)[:, :, :max_len].to(dec_dtype)
+        g_dec = g.to(dec_dtype)
+        o = self.dec(z_dec, g=g_dec)
+
         return o, attn, y_mask, (z, z_p, m_p, logs_p)

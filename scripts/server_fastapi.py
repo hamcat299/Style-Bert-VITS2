@@ -16,7 +16,7 @@ import uvicorn
 from config import get_config
 from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from scipy.io import wavfile
 
 from style_bert_vits2.constants import (
@@ -263,6 +263,173 @@ if __name__ == "__main__":
         with BytesIO() as wavContent:
             wavfile.write(wavContent, sr, audio)
             return Response(content=wavContent.getvalue(), media_type="audio/wav")
+
+    @app.api_route(
+        "/voice/stream", methods=["GET", "POST"], response_class=StreamingResponse
+    )
+    async def voice_stream(
+        request: Request,
+        text: str = Query(..., min_length=1, max_length=limit, description="セリフ"),
+        encoding: str = Query(None, description="textをURLデコードする(ex, `utf-8`)"),
+        model_name: str = Query(
+            None,
+            description="モデル名(model_idより優先)。model_assets内のディレクトリ名を指定",
+        ),
+        model_id: int = Query(
+            0, description="モデルID。`GET /models/info`のkeyの値を指定ください"
+        ),
+        speaker_name: str = Query(
+            None,
+            description="話者名(speaker_idより優先)。esd.listの2列目の文字列を指定",
+        ),
+        speaker_id: int = Query(
+            0, description="話者ID。model_assets>[model]>config.json内のspk2idを確認"
+        ),
+        sdp_ratio: float = Query(
+            DEFAULT_SDP_RATIO,
+            description="SDP(Stochastic Duration Predictor)/DP混合比。比率が高くなるほどトーンのばらつきが大きくなる",
+        ),
+        noise: float = Query(
+            DEFAULT_NOISE,
+            description="サンプルノイズの割合。大きくするほどランダム性が高まる",
+        ),
+        noisew: float = Query(
+            DEFAULT_NOISEW,
+            description="SDPノイズ。大きくするほど発音の間隔にばらつきが出やすくなる",
+        ),
+        length: float = Query(
+            DEFAULT_LENGTH,
+            description="話速。基準は1で大きくするほど音声は長くなり読み上げが遅まる",
+        ),
+        language: Languages = Query(ln, description="textの言語"),
+        auto_split: bool = Query(DEFAULT_LINE_SPLIT, description="改行で分けて生成"),
+        split_interval: float = Query(
+            DEFAULT_SPLIT_INTERVAL, description="分けた場合に挟む無音の長さ（秒）"
+        ),
+        assist_text: Optional[str] = Query(
+            None,
+            description="このテキストの読み上げと似た声音・感情になりやすくなる。ただし抑揚やテンポ等が犠牲になる傾向がある",
+        ),
+        assist_text_weight: float = Query(
+            DEFAULT_ASSIST_TEXT_WEIGHT, description="assist_textの強さ"
+        ),
+        style: Optional[str] = Query(DEFAULT_STYLE, description="スタイル"),
+        style_weight: float = Query(DEFAULT_STYLE_WEIGHT, description="スタイルの強さ"),
+        reference_audio_path: Optional[str] = Query(
+            None, description="スタイルを音声ファイルで行う"
+        ),
+    ):
+        """Infer text to speech with streaming (ストリーミング音声生成)
+
+        音声をチャンク単位で生成し、生成されたチャンクを順次返します。
+        最初のチャンクはWAVヘッダを含み、以降はPCMデータのみです。
+        """
+        logger.info(
+            f"{request.client.host}:{request.client.port}/voice/stream  {unquote(str(request.query_params))}"
+        )
+        if request.method == "GET":
+            logger.warning(
+                "The GET method is not recommended for this endpoint due to various restrictions. Please use the POST method."
+            )
+        if model_id >= len(model_holder.model_names):
+            raise_validation_error(f"model_id={model_id} not found", "model_id")
+
+        if model_name:
+            model_ids = [
+                i
+                for i, x in enumerate(model_holder.models_info)
+                if x.name == model_name
+            ]
+            if not model_ids:
+                raise_validation_error(
+                    f"model_name={model_name} not found", "model_name"
+                )
+            if len(model_ids) > 1:
+                raise_validation_error(
+                    f"model_name={model_name} is ambiguous", "model_name"
+                )
+            model_id = model_ids[0]
+
+        model = loaded_models[model_id]
+        if speaker_name is None:
+            if speaker_id not in model.id2spk.keys():
+                raise_validation_error(
+                    f"speaker_id={speaker_id} not found", "speaker_id"
+                )
+        else:
+            if speaker_name not in model.spk2id.keys():
+                raise_validation_error(
+                    f"speaker_name={speaker_name} not found", "speaker_name"
+                )
+            speaker_id = model.spk2id[speaker_name]
+        if style not in model.style2id.keys():
+            raise_validation_error(f"style={style} not found", "style")
+        assert style is not None
+        if encoding is not None:
+            text = unquote(text, encoding=encoding)
+
+        def generate_audio_stream():
+            """Generator that yields WAV chunks for streaming"""
+            import struct
+
+            first_chunk = True
+            sample_rate = None
+            total_samples = 0
+
+            for sr, audio_chunk in model.infer_stream(
+                text=text,
+                language=language,
+                speaker_id=speaker_id,
+                reference_audio_path=reference_audio_path,
+                sdp_ratio=sdp_ratio,
+                noise=noise,
+                noise_w=noisew,
+                length=length,
+                line_split=auto_split,
+                split_interval=split_interval,
+                assist_text=assist_text,
+                assist_text_weight=assist_text_weight,
+                use_assist_text=bool(assist_text),
+                style=style,
+                style_weight=style_weight,
+            ):
+                sample_rate = sr
+                total_samples += len(audio_chunk)
+
+                if first_chunk:
+                    # Send WAV header with placeholder size (0xFFFFFFFF for streaming)
+                    # Header: RIFF(4) + size(4) + WAVE(4) + fmt (24) + data(4) + size(4) = 44 bytes
+                    header = struct.pack(
+                        "<4sI4s4sIHHIIHH4sI",
+                        b"RIFF",
+                        0xFFFFFFFF,  # Placeholder file size (unknown for streaming)
+                        b"WAVE",
+                        b"fmt ",
+                        16,  # fmt chunk size
+                        1,  # PCM format
+                        1,  # mono
+                        sr,  # sample rate
+                        sr * 2,  # byte rate (sample_rate * channels * bytes_per_sample)
+                        2,  # block align (channels * bytes_per_sample)
+                        16,  # bits per sample
+                        b"data",
+                        0xFFFFFFFF,  # Placeholder data size
+                    )
+                    yield header
+                    first_chunk = False
+
+                # Yield raw PCM data (int16)
+                yield audio_chunk.tobytes()
+
+            logger.success(
+                f"Streaming audio completed: {total_samples} samples at {sample_rate}Hz"
+            )
+
+        return StreamingResponse(
+            generate_audio_stream(),
+            media_type="audio/wav",
+            headers={"Transfer-Encoding": "chunked"},
+        )
 
     @app.post("/g2p")
     def g2p(text: str):

@@ -28,7 +28,7 @@ model_file = hf_hub_download(
 logger.info(f"Downloaded model file from HF Hub: {model_file}")
 model = WeSpeakerResNet34.load_from_checkpoint(model_file, weights_only=False)
 inference = Inference(model, window="whole")
-device = torch.device(config.style_gen_config.device)
+device = torch.device(config.device)
 inference.to(device)
 
 
@@ -83,19 +83,13 @@ def process_line(line: str):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-c", "--config", type=str, default=config.style_gen_config.config_path
-    )
-    parser.add_argument(
-        "--num_processes", type=int, default=config.style_gen_config.num_processes
-    )
+    parser.add_argument("-c", "--config", type=str, required=True)
+    parser.add_argument("--num_processes", type=int, default=config.num_processes)
     args, _ = parser.parse_known_args()
     config_path: str = args.config
     num_processes: int = args.num_processes
 
     hps = HyperParameters.load_from_json(config_path)
-
-    device = config.style_gen_config.device
 
     training_lines: list[str] = []
     with open(hps.data.training_files, encoding="utf-8") as f:

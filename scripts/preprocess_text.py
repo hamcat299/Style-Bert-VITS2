@@ -5,11 +5,10 @@ from pathlib import Path
 from random import sample
 from typing import Optional
 
-from config import get_config
 from tqdm import tqdm
 
 from style_bert_vits2.logging import logger
-from style_bert_vits2.nlp import clean_text
+from style_bert_vits2.nlp import clean_text_with_given_phone_tone
 from style_bert_vits2.nlp.japanese import pyopenjtalk_worker
 from style_bert_vits2.nlp.japanese.user_dict import update_dict
 from style_bert_vits2.utils.stdout_wrapper import SAFE_STDOUT
@@ -22,7 +21,9 @@ pyopenjtalk_worker.initialize_worker()
 update_dict()
 
 
-preprocess_text_config = get_config().preprocess_text_config
+# Default values for CLI arguments
+DEFAULT_VAL_PER_LANG = 0
+DEFAULT_MAX_VAL_TOTAL = 8
 
 
 # Count lines for tqdm
@@ -47,7 +48,7 @@ def process_line(
     if len(splitted_line) != 4:
         raise ValueError(f"Invalid line format: {line.strip()}")
     utt, spk, language, text = splitted_line
-    norm_text, phones, tones, word2ph = clean_text(
+    norm_text, phones, tones, word2ph, _, _, _ = clean_text_with_given_phone_tone(
         text=text,
         language=language,  # type: ignore
         use_jp_extra=use_jp_extra,
@@ -219,22 +220,20 @@ def preprocess(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--transcription-path", default=preprocess_text_config.transcription_path
-    )
-    parser.add_argument("--cleaned-path", default=preprocess_text_config.cleaned_path)
-    parser.add_argument("--train-path", default=preprocess_text_config.train_path)
-    parser.add_argument("--val-path", default=preprocess_text_config.val_path)
-    parser.add_argument("--config-path", default=preprocess_text_config.config_path)
+    parser.add_argument("--transcription-path", required=True)
+    parser.add_argument("--cleaned-path", default=None)
+    parser.add_argument("--train-path", required=True)
+    parser.add_argument("--val-path", required=True)
+    parser.add_argument("--config-path", required=True)
 
     # 「話者ごと」のバリデーションデータ数、言語ごとではない！
     # 元のコードや設定ファイルでval_per_langとなっていたので名前をそのままにしている
     parser.add_argument(
         "--val-per-lang",
-        default=preprocess_text_config.val_per_lang,
+        default=DEFAULT_VAL_PER_LANG,
         help="Number of validation data per SPEAKER, not per language (due to compatibility with the original code).",
     )
-    parser.add_argument("--max-val-total", default=preprocess_text_config.max_val_total)
+    parser.add_argument("--max-val-total", default=DEFAULT_MAX_VAL_TOTAL)
     parser.add_argument("--use_jp_extra", action="store_true")
     parser.add_argument("--yomi_error", default="raise")
     parser.add_argument("--correct_path", action="store_true")

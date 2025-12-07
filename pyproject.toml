@@ -24,7 +24,9 @@ classifiers = [
 dependencies = [
   "cmudict",
   "cn2an",
+  "e2k @ git+https://github.com/tsukumijima/e2k.git@master",
   "g2p_en",
+  "jaconv",
   "jieba",
   "loguru",
   "nltk",

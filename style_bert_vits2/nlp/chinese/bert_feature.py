@@ -22,6 +22,7 @@ def extract_bert_feature(
     device: str,
     assist_text: Optional[str] = None,
     assist_text_weight: float = 0.7,
+    dtype: Optional[torch.dtype] = None,
 ) -> torch.Tensor:
     """
     中国語のテキストから BERT の特徴量を抽出する (PyTorch 推論)
@@ -32,6 +33,7 @@ def extract_bert_feature(
         device (str): 推論に利用するデバイス
         assist_text (Optional[str], optional): 補助テキスト (デフォルト: None)
         assist_text_weight (float, optional): 補助テキストの重み (デフォルト: 0.7)
+        use_fp16 (bool, optional): FP16 に変換するかどうか (デフォルト: False)
 
     Returns:
         torch.Tensor: BERT の特徴量
@@ -42,7 +44,7 @@ def extract_bert_feature(
     if device == "cuda" and not torch.cuda.is_available():
         device = "cpu"
     model = bert_models.load_model(Languages.ZH)
-    bert_models.transfer_model(Languages.ZH, device)
+    bert_models.transfer_model(Languages.ZH, device, dtype=dtype)
 
     style_res_mean = None
     with torch.no_grad():
