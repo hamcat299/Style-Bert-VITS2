@@ -45,9 +45,9 @@ config = get_config()
 ln = config.server_config.language
 
 
-# pyopenjtalk_worker を起動
-## pyopenjtalk_worker は TCP ソケットサーバーのため、ここで起動する
-pyopenjtalk.initialize_worker()
+# pyopenjtalk_worker を起動せず、直接pyopenjtalkを使用
+# （Worker が不安定なため）
+# pyopenjtalk.initialize_worker()
 
 # dict_data/ 以下の辞書データを pyopenjtalk に適用
 try:

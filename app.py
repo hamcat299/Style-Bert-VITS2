@@ -18,8 +18,9 @@ from style_bert_vits2.tts_model import TTSModelHolder
 from style_bert_vits2.utils import torch_device_to_onnx_providers
 
 
-# このプロセスからはワーカーを起動して辞書を使いたいので、ここで初期化
-pyopenjtalk_worker.initialize_worker()
+# ワーカーを使わず直接pyopenjtalkを使用
+# （Worker が不安定なため）
+# pyopenjtalk_worker.initialize_worker()
 
 # dict_data/ 以下の辞書データを pyopenjtalk に適用
 try:

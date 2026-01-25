@@ -150,9 +150,9 @@ def save_last_download(latest_release):
 # ---フロントエンド部分に関する処理ここまで---
 # 以降はAPIの設定
 
-# pyopenjtalk_worker を起動
-## pyopenjtalk_worker は TCP ソケットサーバーのため、ここで起動する
-pyopenjtalk.initialize_worker()
+# pyopenjtalk_worker を起動せず、直接pyopenjtalkを使用
+# （Worker が不安定なため）
+# pyopenjtalk.initialize_worker()
 
 # pyopenjtalk の辞書を更新
 try:
