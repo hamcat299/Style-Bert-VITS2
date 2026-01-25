@@ -155,7 +155,10 @@ def save_last_download(latest_release):
 pyopenjtalk.initialize_worker()
 
 # pyopenjtalk の辞書を更新
-update_dict()
+try:
+    update_dict()
+except Exception as e:
+    logger.warning(f"Failed to update dictionary: {e}")
 
 
 class AudioResponse(Response):
@@ -193,7 +196,7 @@ skip_static_files = bool(args.skip_static_files)
 # 事前に BERT モデル/トークナイザーをロードしておく
 ## ここでロードしなくても必要になった際に自動ロードされるが、時間がかかるため事前にロードしておいた方が体験が良い
 ## server_editor.py は日本語にしか対応していないため、日本語の BERT モデル/トークナイザーのみロードする
-bert_models.load_model(Languages.JP, device_map=device)
+bert_models.load_model(Languages.JP, device_map=None)
 bert_models.load_tokenizer(Languages.JP)
 # VRAM 節約のため、既定では ONNX 版 BERT モデル/トークナイザーは事前ロードしない
 if args.preload_onnx_bert:

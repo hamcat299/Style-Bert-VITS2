@@ -22,7 +22,10 @@ from style_bert_vits2.utils import torch_device_to_onnx_providers
 pyopenjtalk_worker.initialize_worker()
 
 # dict_data/ 以下の辞書データを pyopenjtalk に適用
-update_dict()
+try:
+    update_dict()
+except Exception as e:
+    print(f"Warning: Failed to update dictionary: {e}")
 
 
 parser = argparse.ArgumentParser()

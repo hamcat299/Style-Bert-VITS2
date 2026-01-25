@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(copy \"C:\\\\Users\\\\ts03k\\\\OneDrive\\\\デスクトップ\\\\Git\\\\Style-Bert-VITS2\\\\bert\\\\deberta-v2-large-japanese-char-wwm\\\\pytorch_model.bin\" \"C:\\\\Users\\\\ts03k\\\\OneDrive\\\\デスクトップ\\\\Git\\\\Style-Bert-VITS2\\\\scripts\\\\Style-Bert-VITS2\\\\bert\\\\deberta-v2-large-japanese-char-wwm\"\")",
+      "Bash(copy:*)",
+      "Bash(\"/c/Users/ts03k/OneDrive/デスクトップ/Git/Style-Bert-VITS2/scripts/Style-Bert-VITS2/venv/Scripts/python.exe\" -c \"import torch; print\\(torch.__version__\\)\")",
+      "Bash(\"/c/Users/ts03k/OneDrive/デスクトップ/Git/Style-Bert-VITS2/scripts/Style-Bert-VITS2/venv/Scripts/python.exe\" -c \"import transformers; print\\(transformers.__version__\\)\")",
+      "Bash(\"/c/Users/ts03k/OneDrive/デスクトップ/Git/Style-Bert-VITS2/scripts/Style-Bert-VITS2/venv/Scripts/pip.exe\" install transformers==4.44.0)",
+      "Bash(cmd /c mklink /J \"C:\\\\Users\\\\ts03k\\\\OneDrive\\\\デスクトップ\\\\Git\\\\Style-Bert-VITS2\\\\scripts\\\\Style-Bert-VITS2\\\\model_assets\" \"C:\\\\Users\\\\ts03k\\\\OneDrive\\\\デスクトップ\\\\Git\\\\Style-Bert-VITS2\\\\model_assets\")",
+      "Bash(cmd /c:*)",
+      "Bash(cmd //c \"mklink /J model_assets ..\\\\..\\\\model_assets\")",
+      "Bash(curl:*)",
+      "Bash(\"/c/Users/ts03k/OneDrive/デスクトップ/Git/Style-Bert-VITS2/scripts/Style-Bert-VITS2/venv/Scripts/python.exe\" -c \"import pyopenjtalk; pyopenjtalk.run_frontend\\(''テスト''\\)\")",
+      "Bash(\"/c/Users/ts03k/OneDrive/デスクトップ/Git/Style-Bert-VITS2/scripts/Style-Bert-VITS2/venv/Scripts/pip.exe\" install --force-reinstall pyopenjtalk)",
+      "Bash(\"/c/Users/ts03k/OneDrive/デスクトップ/Git/Style-Bert-VITS2/scripts/Style-Bert-VITS2/venv/Scripts/pip.exe\" install pyopenjtalk --no-build-isolation --only-binary :all:)",
+      "Bash(OPEN_JTALK_DICT_DIR=\"C:/pyopenjtalk_dic/open_jtalk_dic_utf_8-1.11\" \"/c/Users/ts03k/OneDrive/デスクトップ/Git/Style-Bert-VITS2/scripts/Style-Bert-VITS2/venv/Scripts/python.exe\":*)"
+    ]
+  }
+}
