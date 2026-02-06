@@ -4,6 +4,23 @@ from typing import Any
 
 import numpy as np
 import torch
+
+# PyTorch 2.6+ weights_only対策 - pyannote models用
+# torchモジュール自体のloadをパッチ
+_orig_torch_load = torch.load
+def _patched_torch_load(*args, **kwargs):
+    if 'weights_only' not in kwargs:
+        kwargs['weights_only'] = False
+    return _orig_torch_load(*args, **kwargs)
+torch.load = _patched_torch_load
+
+# lightning_fabricのモジュールも直接パッチ
+try:
+    import lightning_fabric.utilities.cloud_io as cloud_io
+    cloud_io.torch.load = _patched_torch_load
+except:
+    pass
+
 from numpy.typing import NDArray
 from pyannote.audio import Inference, Model
 from tqdm import tqdm

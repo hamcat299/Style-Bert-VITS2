@@ -52,6 +52,7 @@ torch.backends.cuda.enable_mem_efficient_sdp(
 
 config = get_config()
 global_step = 0
+use_ddp = False  # Global flag for DDP mode
 
 api = HfApi()
 
@@ -127,17 +128,27 @@ def run():
         )
     )
 
-    backend = "nccl"
-    if platform.system() == "Windows":
-        backend = "gloo"  # If Windows,switch to gloo backend.
-    dist.init_process_group(
-        backend=backend,
-        init_method="env://",
-        timeout=datetime.timedelta(seconds=300),
-    )  # Use torchrun instead of mp.spawn
-    rank = dist.get_rank()
-    local_rank = int(os.environ["LOCAL_RANK"])
-    n_gpus = dist.get_world_size()
+    # Single GPU mode for Windows compatibility (PyTorch 2.8+ gloo issues)
+    global use_ddp
+    use_ddp = os.environ.get("USE_DDP", "0") == "1"
+    if use_ddp:
+        backend = "nccl"
+        if platform.system() == "Windows":
+            backend = "gloo"  # If Windows,switch to gloo backend.
+        dist.init_process_group(
+            backend=backend,
+            init_method="env://",
+            timeout=datetime.timedelta(seconds=300),
+        )  # Use torchrun instead of mp.spawn
+        rank = dist.get_rank()
+        local_rank = int(os.environ["LOCAL_RANK"])
+        n_gpus = dist.get_world_size()
+    else:
+        # Single GPU mode
+        rank = 0
+        local_rank = 0
+        n_gpus = 1
+        logger.info("Running in single GPU mode (DDP disabled)")
 
     hps = HyperParameters.load_from_json(args.config)
     # This is needed because we have to pass values to `train_and_evaluate()
@@ -392,28 +403,29 @@ def run():
         )
     else:
         optim_wd = None
-    net_g = DDP(
-        net_g,
-        device_ids=[local_rank],
-        # bucket_cap_mb=512
-    )
-    net_d = DDP(
-        net_d,
-        device_ids=[local_rank],
-        # bucket_cap_mb=512
-    )
-    if net_dur_disc is not None:
-        net_dur_disc = DDP(
-            net_dur_disc,
+    if use_ddp:
+        net_g = DDP(
+            net_g,
             device_ids=[local_rank],
-            # bucket_cap_mb=512,
+            # bucket_cap_mb=512
         )
-    if net_wd is not None:
-        net_wd = DDP(
-            net_wd,
+        net_d = DDP(
+            net_d,
             device_ids=[local_rank],
-            #  bucket_cap_mb=512
+            # bucket_cap_mb=512
         )
+        if net_dur_disc is not None:
+            net_dur_disc = DDP(
+                net_dur_disc,
+                device_ids=[local_rank],
+                # bucket_cap_mb=512,
+            )
+        if net_wd is not None:
+            net_wd = DDP(
+                net_wd,
+                device_ids=[local_rank],
+                #  bucket_cap_mb=512
+            )
 
     if utils.is_resuming(model_dir):
         if net_dur_disc is not None:
@@ -719,12 +731,14 @@ def train_and_evaluate(
         bert,
         style_vec,
     ) in enumerate(train_loader):
-        if net_g.module.use_noise_scaled_mas:
+        # Get underlying model (handle both DDP and non-DDP cases)
+        net_g_model = net_g.module if use_ddp else net_g
+        if net_g_model.use_noise_scaled_mas:
             current_mas_noise_scale = (
-                net_g.module.mas_noise_scale_initial
-                - net_g.module.noise_scale_delta * global_step
+                net_g_model.mas_noise_scale_initial
+                - net_g_model.noise_scale_delta * global_step
             )
-            net_g.module.current_mas_noise_scale = max(current_mas_noise_scale, 0.0)
+            net_g_model.current_mas_noise_scale = max(current_mas_noise_scale, 0.0)
         x, x_lengths = x.cuda(local_rank, non_blocking=True), x_lengths.cuda(
             local_rank, non_blocking=True
         )
@@ -1075,7 +1089,8 @@ def evaluate(hps, generator, eval_loader, writer_eval):
             language = language.cuda()
             style_vec = style_vec.cuda()
             for use_sdp in [True, False]:
-                y_hat, attn, mask, *_ = generator.module.infer(
+                generator_model = generator.module if use_ddp else generator
+                y_hat, attn, mask, *_ = generator_model.infer(
                     x,
                     x_lengths,
                     speakers,
